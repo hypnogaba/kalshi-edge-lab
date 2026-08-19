@@ -2,13 +2,12 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kalshi Edge Lab</title>
+<title>DoubleZero Edge Lab</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 
 <style>
-  /* ---- tokens: light is the base; dark redefines only tokens ---- */
   :root{
     --ink:#EEF1F7; --panel:#FFFFFF; --panel-2:#F6F8FC; --line:rgba(12,20,40,.11);
     --fg:#0E1524; --muted:#55627A; --faint:#8B96AD;
@@ -46,12 +45,9 @@
 
   *{box-sizing:border-box}
   html{-webkit-text-size-adjust:100%}
-  body{
-    margin:0; background:var(--ink); color:var(--fg);
+  body{margin:0; background:var(--ink); color:var(--fg);
     font-family:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-    font-size:16px; line-height:1.6; letter-spacing:.002em;
-    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
-  }
+    font-size:16px; line-height:1.6; -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility}
   .wrap{max-width:1080px; margin:0 auto; padding:0 24px}
   a{color:inherit}
   h1,h2,h3{font-family:"Archivo",system-ui,sans-serif; text-wrap:balance; margin:0}
@@ -59,145 +55,127 @@
   .eyebrow{font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.22em; text-transform:uppercase; color:var(--accent)}
   .muted{color:var(--muted)}
 
-  /* ---- top bar ---- */
   header.bar{position:sticky; top:0; z-index:20; backdrop-filter:blur(10px);
-    background:color-mix(in srgb, var(--ink) 82%, transparent);
-    border-bottom:1px solid var(--line)}
+    background:color-mix(in srgb, var(--ink) 82%, transparent); border-bottom:1px solid var(--line)}
   .bar-in{display:flex; align-items:center; gap:16px; height:60px}
   .brand{display:flex; align-items:center; gap:10px; font-family:"Archivo"; font-weight:800; letter-spacing:.02em}
   .brand .dot{width:10px; height:10px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 4px var(--glow)}
-  .brand small{font-family:"IBM Plex Mono"; font-weight:500; font-size:11px; letter-spacing:.18em; color:var(--muted); text-transform:uppercase}
+  .brand small{font-family:"IBM Plex Mono"; font-weight:500; font-size:11px; letter-spacing:.16em; color:var(--muted); text-transform:uppercase}
   .spacer{flex:1}
   .live{display:inline-flex; align-items:center; gap:7px; font-family:"IBM Plex Mono"; font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted)}
   .live b{width:8px; height:8px; border-radius:50%; background:var(--up); animation:pulse 2s infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
-  .toggle{font-family:"IBM Plex Mono"; font-size:12px; color:var(--fg); background:var(--panel-2);
-    border:1px solid var(--line); border-radius:999px; padding:7px 13px; cursor:pointer}
+  .toggle{font-family:"IBM Plex Mono"; font-size:12px; color:var(--fg); background:var(--panel-2); border:1px solid var(--line); border-radius:999px; padding:7px 13px; cursor:pointer}
   .toggle:hover{border-color:var(--accent)}
 
-  /* ---- ticker ---- */
   .ticker{border-bottom:1px solid var(--line); background:var(--panel-2); overflow:hidden; white-space:nowrap}
-  .ticker-track{display:inline-flex; gap:34px; padding:10px 0; animation:scroll 34s linear infinite; will-change:transform}
+  .ticker-track{display:inline-flex; gap:34px; padding:10px 0; animation:scroll 36s linear infinite; will-change:transform}
   .ticker:hover .ticker-track{animation-play-state:paused}
   .ticker .it{font-family:"IBM Plex Mono"; font-size:13px; color:var(--muted)}
   .ticker .it b{color:var(--fg); font-weight:600}
   @keyframes scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
 
-  /* ---- hero ---- */
-  .hero{padding:64px 0 40px; position:relative}
+  .hero{padding:64px 0 40px}
   .hero h1{font-size:clamp(38px,7vw,74px); font-weight:800; line-height:.98; letter-spacing:-.02em; margin:18px 0 0}
   .hero h1 .em{color:var(--accent)}
-  .lede{max-width:60ch; margin:20px 0 0; font-size:clamp(16px,2.1vw,19px); color:var(--muted)}
+  .lede{max-width:62ch; margin:20px 0 0; font-size:clamp(16px,2.1vw,19px); color:var(--muted)}
   .cta{display:flex; gap:12px; flex-wrap:wrap; margin-top:26px}
-  .btn{font-family:"IBM Plex Mono"; font-size:13px; letter-spacing:.02em; text-decoration:none;
-    padding:11px 17px; border-radius:10px; border:1px solid var(--line); background:var(--panel);
-    display:inline-flex; align-items:center; gap:8px}
+  .btn{font-family:"IBM Plex Mono"; font-size:13px; text-decoration:none; padding:11px 17px; border-radius:10px; border:1px solid var(--line); background:var(--panel); display:inline-flex; align-items:center; gap:8px}
   .btn.primary{background:var(--accent); color:#04120f; border-color:transparent; font-weight:600}
-  :root[data-theme="dark"] .btn.primary,:root:not([data-theme="light"]) .btn.primary{color:#04120f}
   .btn:hover{transform:translateY(-1px)}
 
-  /* ---- sections ---- */
   section{padding:44px 0; border-top:1px solid var(--line)}
   .sec-head{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; margin-bottom:26px}
   .sec-head h2{font-size:clamp(22px,3.4vw,30px); font-weight:700; letter-spacing:-.01em}
   .sec-head .n{font-family:"IBM Plex Mono"; color:var(--faint); font-size:13px}
 
-  /* ---- task steps ---- */
   .steps{display:grid; gap:16px; grid-template-columns:repeat(3,1fr)}
   @media(max-width:820px){.steps{grid-template-columns:1fr}}
-  .step{background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:22px; box-shadow:var(--shadow); position:relative; overflow:hidden}
+  .step{background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:22px; box-shadow:var(--shadow)}
   .step .idx{font-family:"Archivo"; font-weight:800; font-size:13px; letter-spacing:.14em; color:var(--accent)}
   .step h3{font-size:20px; margin:10px 0 8px; font-weight:700}
   .step p{margin:0; color:var(--muted); font-size:14.5px}
-  .pill{display:inline-flex; align-items:center; gap:6px; font-family:"IBM Plex Mono"; font-size:11px; letter-spacing:.1em; text-transform:uppercase; padding:5px 10px; border-radius:999px; border:1px solid var(--line); margin-top:16px}
-  .pill.live{color:var(--up)} .pill.live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--up)}
-  .pill.plan{color:var(--accent-2)} .pill.plan::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent-2)}
-  .pill.defer{color:var(--faint)} .pill.defer::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--faint)}
+  .pill{display:inline-flex; align-items:center; gap:6px; font-family:"IBM Plex Mono"; font-size:11px; letter-spacing:.09em; text-transform:uppercase; padding:5px 10px; border-radius:999px; border:1px solid var(--line); margin-top:16px}
+  .pill::before{content:""; width:7px; height:7px; border-radius:50%}
+  .pill.live{color:var(--up)} .pill.live::before{background:var(--up)}
+  .pill.ready{color:var(--accent-2)} .pill.ready::before{background:var(--accent-2)}
+  .pill.defer{color:var(--faint)} .pill.defer::before{background:var(--faint)}
 
-  /* ---- stat tiles ---- */
   .tiles{display:grid; grid-template-columns:repeat(4,1fr); gap:14px}
   @media(max-width:820px){.tiles{grid-template-columns:repeat(2,1fr)}}
   .tile{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px}
-  .tile .k{font-family:"Archivo"; font-weight:800; font-size:clamp(24px,3.6vw,32px); letter-spacing:-.02em}
-  .tile .l{font-family:"IBM Plex Mono"; font-size:11.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin-top:4px}
+  .tile .k{font-family:"Archivo"; font-weight:800; font-size:clamp(22px,3.4vw,30px); letter-spacing:-.02em}
+  .tile .l{font-family:"IBM Plex Mono"; font-size:11.5px; letter-spacing:.07em; text-transform:uppercase; color:var(--muted); margin-top:4px}
   .tile .k .u{color:var(--faint); font-size:.6em; font-weight:600}
 
-  /* ---- panels grid ---- */
   .board{display:grid; grid-template-columns:1fr 1fr; gap:16px}
   @media(max-width:820px){.board{grid-template-columns:1fr}}
   .card{background:var(--panel); border:1px solid var(--line); border-radius:16px; box-shadow:var(--shadow); overflow:hidden}
   .card .ch{display:flex; align-items:center; gap:10px; padding:14px 18px; border-bottom:1px solid var(--line)}
-  .card .ch h3{font-size:14px; font-family:"IBM Plex Mono"; font-weight:600; letter-spacing:.06em; text-transform:uppercase}
+  .card .ch h3{font-size:14px; font-family:"IBM Plex Mono"; font-weight:600; letter-spacing:.05em; text-transform:uppercase}
   .card .ch .tag{margin-left:auto; font-family:"IBM Plex Mono"; font-size:11px; color:var(--faint)}
-  .tbl{width:100%; border-collapse:collapse; font-family:"IBM Plex Mono"; font-size:13.5px}
-  .tbl th,.tbl td{text-align:left; padding:10px 18px; border-bottom:1px solid var(--line); white-space:nowrap}
-  .tbl th{font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); font-weight:500}
-  .tbl td.num{text-align:right; font-variant-numeric:tabular-nums}
-  .tbl tr:last-child td{border-bottom:0}
-  .chip{font-family:"IBM Plex Mono"; font-size:11px; letter-spacing:.06em; text-transform:uppercase; padding:3px 8px; border-radius:6px; border:1px solid transparent}
-  .chip.yes{color:var(--up); background:color-mix(in srgb,var(--up) 14%, transparent); border-color:color-mix(in srgb,var(--up) 30%, transparent)}
-  .chip.no{color:var(--down); background:color-mix(in srgb,var(--down) 14%, transparent); border-color:color-mix(in srgb,var(--down) 30%, transparent)}
-  .chip.hold{color:var(--hold); background:color-mix(in srgb,var(--hold) 12%, transparent); border-color:color-mix(in srgb,var(--hold) 26%, transparent)}
-  .feed{max-height:340px; overflow:auto}
-  .feed-row{display:grid; grid-template-columns:1fr auto; gap:4px 12px; padding:11px 18px; border-bottom:1px solid var(--line); font-family:"IBM Plex Mono"; font-size:12.5px}
-  .feed-row:last-child{border-bottom:0}
-  .feed-row .mk{color:var(--fg)}
-  .feed-row .meta{color:var(--muted); font-size:11.5px}
-  .feed-row .blocked{color:var(--faint); font-size:11px}
+  .card .bd{padding:16px 18px}
 
-  /* ---- architecture ---- */
+  .bbo{display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px}
+  .bbo .side{border:1px solid var(--line); border-radius:12px; padding:12px 14px; font-family:"IBM Plex Mono"}
+  .bbo .side .lab{font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint)}
+  .bbo .side .px{font-family:"Archivo"; font-weight:800; font-size:22px; margin-top:3px; font-variant-numeric:tabular-nums}
+  .bbo .bid .px{color:var(--up)} .bbo .ask .px{color:var(--down)}
+  .bbo .side .sz{font-size:12px; color:var(--muted); margin-top:2px}
+  .tape{font-family:"IBM Plex Mono"; font-size:12.5px}
+  .tape .r{display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--line)}
+  .tape .r:last-child{border-bottom:0}
+  .tape .b{color:var(--up)} .tape .a{color:var(--down)}
+
+  .stat-rows{font-family:"IBM Plex Mono"; font-size:13.5px}
+  .stat-rows .r{display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--line)}
+  .stat-rows .r:last-child{border-bottom:0}
+  .stat-rows .r span:last-child{font-variant-numeric:tabular-nums; font-weight:600}
+  .big{font-family:"Archivo"; font-weight:800; font-size:34px; letter-spacing:-.02em; color:var(--accent); margin:2px 0 2px}
+
   .arch{display:flex; align-items:stretch; gap:12px; flex-wrap:wrap; font-family:"IBM Plex Mono"; font-size:13px}
   .arch .col{flex:1; min-width:150px; display:flex; flex-direction:column; gap:10px}
   .node{border:1px solid var(--line); background:var(--panel); border-radius:12px; padding:12px 14px}
   .node.on{border-color:color-mix(in srgb,var(--accent) 55%, var(--line))}
   .node .t{font-weight:600} .node .s{color:var(--muted); font-size:11.5px; margin-top:2px}
-  .arrow{align-self:center; color:var(--faint); font-size:20px; padding:0 2px}
+  .arrow{align-self:center; color:var(--faint); font-size:20px}
   @media(max-width:820px){.arrow{transform:rotate(90deg)}}
 
-  /* ---- status two-col ---- */
   .status{display:grid; grid-template-columns:1fr 1fr; gap:16px}
   @media(max-width:820px){.status{grid-template-columns:1fr}}
   .status ul{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px}
   .status li{display:flex; gap:11px; font-size:14.5px; color:var(--muted)}
   .status li b{color:var(--fg); font-weight:600}
-  .status .mk{margin-top:2px; flex:none; width:18px; font-family:"IBM Plex Mono"; font-weight:600}
+  .status .mk{margin-top:2px; flex:none; width:16px; font-family:"IBM Plex Mono"; font-weight:600}
   .status .ok .mk{color:var(--up)} .status .pend .mk{color:var(--accent-2)}
 
   .note{font-size:13px; color:var(--faint); font-family:"IBM Plex Mono"; margin-top:18px; line-height:1.7}
-
   footer{border-top:1px solid var(--line); padding:34px 0 60px; color:var(--muted); font-family:"IBM Plex Mono"; font-size:13px}
   footer .row{display:flex; gap:18px; flex-wrap:wrap; align-items:center}
-  footer a{color:var(--accent)}
 
   .reveal{opacity:0; transform:translateY(14px); transition:opacity .6s ease, transform .6s ease}
   .reveal.in{opacity:1; transform:none}
-  @media(prefers-reduced-motion:reduce){
-    .reveal{opacity:1; transform:none; transition:none}
-    .ticker-track{animation:none} .live b{animation:none}
-  }
+  @media(prefers-reduced-motion:reduce){.reveal{opacity:1; transform:none; transition:none} .ticker-track{animation:none} .live b{animation:none}}
   :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:6px}
 </style>
 
 <header class="bar">
   <div class="wrap bar-in">
-    <div class="brand"><span class="dot" aria-hidden="true"></span> Edge Lab <small>Kalshi × DoubleZero</small></div>
+    <div class="brand"><span class="dot" aria-hidden="true"></span> Edge Lab <small>Hyperliquid × DoubleZero</small></div>
     <span class="spacer"></span>
     <span class="live"><b aria-hidden="true"></b> Live data</span>
     <button class="toggle" id="tg" type="button">Theme</button>
   </div>
 </header>
 
-<div class="ticker" aria-hidden="true">
-  <div class="ticker-track mono" id="tick"></div>
-</div>
+<div class="ticker" aria-hidden="true"><div class="ticker-track mono" id="tick"></div></div>
 
 <main class="wrap">
-
   <section class="hero" style="border-top:0">
     <div class="reveal">
       <div class="eyebrow">Build in public · real numbers, open code</div>
       <h1>Stop telling.<br><span class="em">Start showing.</span></h1>
-      <p class="lede">A public lab that measures — and demonstrates — what a faster market feed is worth on Kalshi. One host, real Bitcoin markets, honest numbers, and a demo bot you can watch think. No promises, just the tape.</p>
+      <p class="lede">A public lab that measures what the DoubleZero edge feed is worth on Hyperliquid — the same BTC-PERP tape arriving two ways on one host, timed to the millisecond. Real trades, honest numbers, and a demo bot you can watch think. No promises, just the wire.</p>
       <div class="cta">
         <a class="btn primary" href="#proof">See the live proof ↓</a>
         <a class="btn" href="#mission">The three goals</a>
@@ -209,21 +187,18 @@
     <div class="sec-head"><span class="n">01</span><h2>What we set out to solve</h2></div>
     <div class="steps">
       <div class="step reveal">
-        <div class="idx">STEP A</div>
-        <h3>The Latency Race</h3>
-        <p>Same Bitcoin market, two pipes side by side — the free public Kalshi feed vs. the DoubleZero edge feed — with a millisecond counter on who sees each trade first. Output: a clip and a table nobody can argue with.</p>
-        <span class="pill plan">Planned · needs edge feed</span>
+        <div class="idx">STEP A</div><h3>The Latency Race</h3>
+        <p>The same Hyperliquid BTC-PERP tape, two pipes on one host — the public Hyperliquid WebSocket vs. the DoubleZero edge multicast feed — matched trade-for-trade with a millisecond delta on who saw it first.</p>
+        <span class="pill ready">Harness built · awaiting server feed</span>
       </div>
       <div class="step reveal">
-        <div class="idx">STEP B</div>
-        <h3>The Demo Bot</h3>
-        <p>A deliberately simple bot on Kalshi's demo environment. It reads real BTC trades and Binance spot, forms a signal, and would place fake-money orders — the whole pipeline, live on a dashboard.</p>
+        <div class="idx">STEP B</div><h3>The Demo Bot</h3>
+        <p>A deliberately simple bot that reads real trades and an exchange reference price, forms a signal, and runs the full pipeline — decision, guardrails, order, dashboard — on paper money.</p>
         <span class="pill live">Live · running on real data</span>
       </div>
       <div class="step reveal">
-        <div class="idx">STEP C</div>
-        <h3>Live Experiment</h3>
-        <p>A real account, tiny real money, fully documented — only if A and B land and it gets a separate green light. A decision for later, not now.</p>
+        <div class="idx">STEP C</div><h3>Live Experiment</h3>
+        <p>A real account, tiny real money, fully documented — only if A and B land. A decision for later, not now.</p>
         <span class="pill defer">Deferred · not built</span>
       </div>
     </div>
@@ -232,145 +207,115 @@
   <section id="proof">
     <div class="sec-head"><span class="n">02</span><h2>Live proof</h2><span class="muted" style="font-size:14px">real values captured from a running session</span></div>
     <div class="tiles">
-      <div class="tile reveal"><div class="k mono">$68,637</div><div class="l">BTC spot · Binance</div></div>
-      <div class="tile reveal"><div class="k mono">363<span class="u"> /30s</span></div><div class="l">Real trades · keyless feed</div></div>
-      <div class="tile reveal"><div class="k mono">318</div><div class="l">Open daily BTC markets</div></div>
-      <div class="tile reveal"><div class="k mono">40<span class="u"> ✓</span></div><div class="l">Automated tests green</div></div>
+      <div class="tile reveal"><div class="k mono">$68,286</div><div class="l">HL BTC-PERP mid · live</div></div>
+      <div class="tile reveal"><div class="k mono">269<span class="u"> /30s</span></div><div class="l">Real trades · HL public feed</div></div>
+      <div class="tile reveal"><div class="k mono">+3.0<span class="u"> ms</span></div><div class="l">Race harness · p50 (self-check)</div></div>
+      <div class="tile reveal"><div class="k mono">65<span class="u"> ✓</span></div><div class="l">Automated tests green</div></div>
     </div>
 
     <div class="board" style="margin-top:16px">
       <div class="card reveal">
-        <div class="ch"><h3>Signal board</h3><span class="tag">near-the-money · threshold markets</span></div>
-        <div style="overflow-x:auto">
-        <table class="tbl">
-          <thead><tr><th>Market (BTC ≥ strike?)</th><th class="num">YES</th><th>Signal</th></tr></thead>
-          <tbody>
-            <tr><td>T&nbsp;68,499.99</td><td class="num">74¢</td><td><span class="chip yes">Buy YES</span></td></tr>
-            <tr><td>T&nbsp;68,499.99 · 17h</td><td class="num">54¢</td><td><span class="chip yes">Buy YES</span></td></tr>
-            <tr><td>T&nbsp;68,499.99 · +2d</td><td class="num">53¢</td><td><span class="chip yes">Buy YES</span></td></tr>
-            <tr><td>T&nbsp;68,599.99</td><td class="num">55¢</td><td><span class="chip hold">Hold</span></td></tr>
-            <tr><td>T&nbsp;68,699.99</td><td class="num">34¢</td><td><span class="chip no">Buy NO</span></td></tr>
-            <tr><td>T&nbsp;68,749.99</td><td class="num">42¢</td><td><span class="chip no">Buy NO</span></td></tr>
-          </tbody>
-        </table>
+        <div class="ch"><h3>Hyperliquid BTC-PERP</h3><span class="tag">public WS · live</span></div>
+        <div class="bd">
+          <div class="bbo">
+            <div class="side bid"><div class="lab">Best bid</div><div class="px">68,286.0</div><div class="sz">1.4835 BTC · 7 orders</div></div>
+            <div class="side ask"><div class="lab">Best ask</div><div class="px">68,287.0</div><div class="sz">7.3474 BTC · 24 orders</div></div>
+          </div>
+          <div class="tape" id="tape"></div>
         </div>
       </div>
 
       <div class="card reveal">
-        <div class="ch"><h3>Decision feed</h3><span class="tag">168 decisions · 0 orders (dry-run)</span></div>
-        <div class="feed" id="feed"></div>
+        <div class="ch"><h3>Latency race harness</h3><span class="tag">validated on real data</span></div>
+        <div class="bd">
+          <div class="mono" style="font-size:12px; color:var(--faint); letter-spacing:.06em; text-transform:uppercase">Self-check · HL feed vs +3 ms replay</div>
+          <div class="big">100.0% matched</div>
+          <div class="stat-rows">
+            <div class="r"><span>Trades matched</span><span>157 / 157</span></div>
+            <div class="r"><span>p50 delta</span><span>+3.000 ms</span></div>
+            <div class="r"><span>p90 / p99</span><span>+3.000 ms</span></div>
+            <div class="r"><span>Discards</span><span>0</span></div>
+          </div>
+          <p class="note" style="margin-top:14px">Matches trades across two feeds by exact trade-id on one clock, then reports the delta. The self-check injects a known +3 ms and recovers it exactly — so the tool is honest. Real edge-vs-public numbers land once the DoubleZero feed runs on the server.</p>
+        </div>
       </div>
     </div>
-    <p class="note">Every value on this page is reproducible from the open code. The bot ran in dry-run: the kill-switch was engaged, so each would-be order is logged as <b>blocked</b> and nothing was sent. Signal logic is an openly labeled naïve example — no profit is claimed or implied.</p>
+    <p class="note">Every value here is reproducible from the open code. The DoubleZero decoder is verified byte-for-byte against the published wire spec; the demo bot ran with its kill-switch on (zero orders sent). The signal is an openly labeled naïve example — no profit is claimed.</p>
   </section>
 
   <section id="how">
     <div class="sec-head"><span class="n">03</span><h2>How it's built</h2><span class="muted" style="font-size:14px">one interface, swappable feeds</span></div>
     <div class="arch">
       <div class="col">
-        <div class="node on"><div class="t">Kalshi public WS</div><div class="s">live · captured</div></div>
-        <div class="node on"><div class="t">Kalshi REST</div><div class="s">keyless · real trades</div></div>
-        <div class="node"><div class="t">DoubleZero feed</div><div class="s">adapter stub · pending</div></div>
+        <div class="node on"><div class="t">Hyperliquid WS</div><div class="s">public · live</div></div>
+        <div class="node on"><div class="t">DoubleZero edge</div><div class="s">binary multicast · decoder ready</div></div>
+        <div class="node"><div class="t">Kalshi</div><div class="s">second source · demo</div></div>
       </div>
       <div class="arrow" aria-hidden="true">→</div>
       <div class="col"><div class="node on" style="margin:auto 0"><div class="t">Event</div><div class="s">one normalized stream — source-agnostic</div></div></div>
       <div class="arrow" aria-hidden="true">→</div>
       <div class="col">
-        <div class="node"><div class="t">Latency race</div><div class="s">stats · split-screen</div></div>
+        <div class="node on"><div class="t">Latency race</div><div class="s">match · stats · split-screen</div></div>
         <div class="node on"><div class="t">Demo bot</div><div class="s">signal · guardrails · orders</div></div>
         <div class="node on"><div class="t">Dashboard</div><div class="s">this portal</div></div>
       </div>
     </div>
-    <p class="note">Three data sources behind one <b>Event</b> interface. When the DoubleZero feed comes online it drops in as one more adapter — the race and the bot consume it with zero changes downstream.</p>
+    <p class="note">Three data sources behind one <b>Event</b> interface. The DoubleZero edge feed decodes the Top-of-Book &amp; Trades binary wire format (group <b>tiredsolid → 233.84.178.15</b>); when it runs on the server it drops in as one more source — race and bot consume it unchanged.</p>
   </section>
 
   <section id="status">
     <div class="sec-head"><span class="n">04</span><h2>Honest status</h2><span class="muted" style="font-size:14px">the honesty is the product</span></div>
     <div class="status">
-      <div class="card" style="padding:20px">
-        <div class="ok">
-        <ul>
-          <li><span class="mk">✓</span><span><b>Real data, no key.</b> The public feed streams live BTC trades — 363 in a 30-second window.</span></li>
-          <li><span class="mk">✓</span><span><b>Full bot loop proven.</b> Real trades + spot → signal → guardrails → decision log → dashboard.</span></li>
-          <li><span class="mk">✓</span><span><b>Safety wired.</b> Demo-only, hard position/rate ceilings, and a kill-switch checked every loop.</span></li>
-          <li><span class="mk">✓</span><span><b>Verified auth &amp; tests.</b> Demo credentials return 200; 40 automated tests pass.</span></li>
-        </ul>
-        </div>
-      </div>
-      <div class="card" style="padding:20px">
-        <div class="pend">
-        <ul>
-          <li><span class="mk">→</span><span><b>Fund the demo wallet.</b> Balance is $0, so live fake-money orders are blocked until it's topped up.</span></li>
-          <li><span class="mk">→</span><span><b>Production feed key.</b> Real-time streaming and the latency race need the authenticated production socket.</span></li>
-          <li><span class="mk">→</span><span><b>Order-book depth.</b> Public REST gives trades, not depth — the mid-price signal waits on the streaming feed.</span></li>
-          <li><span class="mk">→</span><span><b>The edge feed.</b> The DoubleZero adapter is stubbed, ready for the wire-format spec.</span></li>
-        </ul>
-        </div>
-      </div>
+      <div class="card" style="padding:20px"><div class="ok"><ul>
+        <li><span class="mk">✓</span><span><b>Hyperliquid feed, live.</b> Public WS streams real BTC-PERP trades &amp; quotes — 269 trades in 30 seconds.</span></li>
+        <li><span class="mk">✓</span><span><b>DoubleZero decoder, spec-accurate.</b> Binary Top-of-Book &amp; Trades decoder verified byte-for-byte; multicast receiver self-test passes.</span></li>
+        <li><span class="mk">✓</span><span><b>Race harness, validated.</b> 100% match and an exact +3 ms recovery on a controlled replay.</span></li>
+        <li><span class="mk">✓</span><span><b>Publish approval.</b> Green light to publish measured latency numbers is in hand.</span></li>
+      </ul></div></div>
+      <div class="card" style="padding:20px"><div class="pend"><ul>
+        <li><span class="mk">→</span><span><b>Attach the feed on the server.</b> Access pass + the <code>doublezero1</code> tunnel, then run the receiver next to the public capture for real edge-vs-public numbers.</span></li>
+        <li><span class="mk">→</span><span><b>Fund the demo wallet.</b> Paper balance is $0, so live paper orders wait on a top-up.</span></li>
+        <li><span class="mk">→</span><span><b>Record the clips.</b> The latency GIF and dashboard capture come after the first real race run.</span></li>
+      </ul></div></div>
     </div>
   </section>
-
 </main>
 
 <footer>
   <div class="wrap row">
-    <span>Kalshi&nbsp;×&nbsp;DoubleZero Edge Lab</span>
+    <span>DoubleZero Edge Lab · Hyperliquid</span>
     <span class="muted">·</span>
     <span class="muted">private repo · code opens on review</span>
     <span class="spacer" style="flex:1"></span>
-    <span class="muted">Phase 0 ✓ · REST adapter ✓ · Demo bot ✓</span>
+    <span class="muted">HL feed ✓ · DZ decoder ✓ · Race harness ✓ · Demo bot ✓</span>
   </div>
 </footer>
 
 <script>
-  // theme toggle (respects the three-state model: unset = follow OS)
   (function(){
     var root=document.documentElement, btn=document.getElementById('tg');
     btn.addEventListener('click',function(){
-      var cur=root.getAttribute('data-theme');
-      var sysDark=matchMedia('(prefers-color-scheme:dark)').matches;
+      var cur=root.getAttribute('data-theme'); var sysDark=matchMedia('(prefers-color-scheme:dark)').matches;
       if(!cur) cur=sysDark?'dark':'light';
       root.setAttribute('data-theme', cur==='dark'?'light':'dark');
     });
   })();
-
-  // ticker built from the real snapshot
   (function(){
-    var items=[
-      ['BTC/USD','$68,637.65'],['T 68,499.99','YES 74¢ ▲ BUY'],['T 68,599.99','YES 55¢ · HOLD'],
-      ['T 68,699.99','YES 34¢ ▼ SELL'],['T 68,749.99','YES 42¢ ▼ SELL'],['DZ FEED','stub · pending'],
-      ['TRADES','199 / 15s near-money'],['TESTS','40 passing'],['DEMO AUTH','HTTP 200']
-    ];
-    var frag='';
-    items.forEach(function(it){ frag+='<span class="it"><b>'+it[0]+'</b> &nbsp;'+it[1]+'</span>'; });
-    document.getElementById('tick').innerHTML=frag+frag; // doubled for seamless loop
+    var items=[['HL BTC-PERP','$68,286.5'],['BID','68,286.0 ×1.48'],['ASK','68,287.0 ×7.35'],
+      ['RACE p50','+3.0 ms (self-check)'],['DZ GROUP','tiredsolid · 233.84.178.15'],
+      ['HL TRADES','269 / 30s'],['TESTS','65 passing'],['DECODER','spec-verified']];
+    var f=''; items.forEach(function(it){ f+='<span class="it"><b>'+it[0]+'</b> &nbsp;'+it[1]+'</span>'; });
+    document.getElementById('tick').innerHTML=f+f;
   })();
-
-  // decision feed from real logged rows
   (function(){
-    var rows=[
-      {mk:'T 68,699.99', y:32, s:68604.75, sig:'no'},
-      {mk:'T 68,499.99', y:70, s:68604.75, sig:'yes'},
-      {mk:'T 68,499.99 · 17h', y:54, s:68604.75, sig:'yes'},
-      {mk:'T 68,499.99 · +2d', y:53, s:68604.75, sig:'yes'},
-      {mk:'T 68,749.99', y:37, s:68604.75, sig:'no'},
-      {mk:'T 68,699.99', y:34, s:68613.85, sig:'no'},
-      {mk:'T 68,599.99', y:55, s:68613.85, sig:'hold'},
-      {mk:'T 68,499.99', y:72, s:68621.10, sig:'yes'}
-    ];
-    var lbl={yes:['Buy YES','yes'],no:['Buy NO','no'],hold:['Hold','hold']};
-    var html='';
-    rows.forEach(function(r){
-      var L=lbl[r.sig];
-      var act=r.sig==='hold'?'<span class="blocked">no action</span>':'<span class="blocked">■ blocked · kill-switch</span>';
-      html+='<div class="feed-row"><div class="mk">'+r.mk+' &nbsp;<span class="chip '+L[1]+'">'+L[0]+'</span></div>'+
-            '<div class="meta">yes '+r.y+'¢ · spot $'+r.s.toLocaleString()+'</div>'+
-            '<div class="meta" style="grid-column:1/-1">'+act+'</div></div>';
+    var trades=[['B','68,287.0','0.00100'],['B','68,287.0','0.00018'],['A','68,286.0','0.00019'],
+      ['A','68,286.0','0.01089'],['A','68,286.0','0.01821']];
+    var h=''; trades.forEach(function(t){
+      var cls=t[0]==='B'?'b':'a', lab=t[0]==='B'?'BUY':'SELL';
+      h+='<div class="r"><span class="'+cls+'">'+lab+' '+t[1]+'</span><span class="muted">'+t[2]+' BTC</span></div>';
     });
-    document.getElementById('feed').innerHTML=html;
+    document.getElementById('tape').innerHTML=h;
   })();
-
-  // scroll reveal
   (function(){
     var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}})},{threshold:.12});
     document.querySelectorAll('.reveal').forEach(function(el){io.observe(el)});
