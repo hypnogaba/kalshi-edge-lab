@@ -1,3 +1,4 @@
 # Session log
 
 - 2026-08-19: `check-auth` → HTTP 200, AUTH OK. Demo balance: $0.0000 (balance=0).
+- 2026-08-19: Phase 0 complete (local): `common/` (clock, config, event, storage, ws_client) + `sources/kalshi_ws` (auth, capture, decoder) + `sources/dz_feed` (capture, decoder) built and unit-tested, 18 tests passing. `make check-auth` OK against Kalshi demo. `scripts/verify_capture.py` added and run against `data/smoke.bin`: frames=3 events=0 seq_gaps=0 -> ACCEPTANCE: FAIL (expected — demo book is empty, so there are no trade/book events to decode; capture/decode/storage plumbing itself is verified). Real-data acceptance (non-zero events, seq contiguity) is pending a prod key + prod capture, to run on the DZ server.
