@@ -1,5 +1,6 @@
 import pytest
-from common.config import kalshi_demo, get
+
+from common.config import get, kalshi_demo
 
 
 def test_get_required_raises_when_missing(monkeypatch):

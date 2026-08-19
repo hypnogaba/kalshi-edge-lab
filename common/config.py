@@ -1,6 +1,7 @@
 """Environment/config loading. Loads .env once; typed accessors for Kalshi."""
 import os
 from dataclasses import dataclass
+
 from dotenv import load_dotenv
 
 load_dotenv()

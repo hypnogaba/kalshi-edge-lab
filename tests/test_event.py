@@ -1,4 +1,4 @@
-from common.event import Event, Source, Kind, Side
+from common.event import Event, Kind, Side, Source
 
 
 def test_event_construction_and_immutability():
