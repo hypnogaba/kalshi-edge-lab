@@ -50,3 +50,26 @@ Kalshi's BTC strike-ladder products come in a few series:
 
 The final capture target market(s) will be chosen at prod-capture time based on which series
 has real order flow.
+
+## REST shapes (observed prod)
+
+Captured live from the **public** Kalshi prod REST (`api.elections.kalshi.com`, no key) via
+`sources/kalshi_rest/poller.py`. Real trade print:
+
+```json
+{"trade_id":"abc","ticker":"KXBTC-26AUG1912-B68550","taker_side":"yes",
+ "yes_price_dollars":"0.0100","no_price_dollars":"0.9900",
+ "count_fp":"50.00","created_time":"2026-08-19T15:37:39Z"}
+```
+
+Notes:
+- Prices are **dollar strings** (`"0.0100"` → 1 cent), not integer cents like the WS feed.
+  `count_fp` is a float-string, not an integer.
+- `taker_side` picks which of `yes_price_dollars` / `no_price_dollars` is the trade price.
+- Orderbook response shape: `{"orderbook":{"yes":[[price_cents,size],...],"no":[...]}}` —
+  levels here *are* integer cents, unlike the trade endpoint.
+- **Public REST orderbook depth is typically empty** (`yes`/`no` come back `null` or `[]`) even
+  for actively-traded near-the-money markets. This was confirmed on the live smoke: 417 frames
+  captured, 363 decoded to trade events, 0 to book-level events — trades printed continuously
+  during the 30s window but no market returned non-empty depth. Book-level events are only
+  produced when Kalshi does return levels; treat 0 as expected on public REST, not a bug.
