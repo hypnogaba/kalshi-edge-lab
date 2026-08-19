@@ -14,7 +14,8 @@ PATH = "/trade-api/v2/portfolio/balance"
 def main() -> int:
     cfg = kalshi_demo()
     signer = KalshiSigner(cfg.key_id, cfg.private_key_path)
-    base = cfg.api_base.replace("/trade-api/v2", "")  # host root
+    api_base = cfg.api_base or "https://external-api.demo.kalshi.co/trade-api/v2"
+    base = api_base.replace("/trade-api/v2", "")  # host root
     headers = signer.headers("GET", PATH)
     r = httpx.get(base + PATH, headers=headers, timeout=10.0)
     print(f"HTTP {r.status_code}")
