@@ -12,6 +12,8 @@ class OrderManager:
     def __init__(self, key_id: str, private_key_path: str, base: str):
         self._signer = KalshiSigner(key_id, private_key_path)
         self._base = base.replace("/trade-api/v2", "")
+        if "demo" not in self._base:
+            raise ValueError(f"OrderManager must target the Kalshi demo host; got {self._base!r}")
         self._c = httpx.Client(base_url=self._base, timeout=15.0)
 
     def _headers(self, method: str, path: str) -> dict[str, str]:

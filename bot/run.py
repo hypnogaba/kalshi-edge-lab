@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import re
 import time
 import uuid
@@ -23,6 +24,8 @@ from common.config import kalshi_demo
 from reference.binance_ws import BinanceRef
 from sources.kalshi_rest.client import KalshiRestClient
 from sources.kalshi_rest.selector import nearest_markets, parse_strike
+
+logger = logging.getLogger("bot.run")
 
 _THRESHOLD_SUFFIX = re.compile(r"-T\d+(?:\.\d+)?$")
 _BINANCE_SPOT_URL = "https://api.binance.com/api/v3/ticker/price"
@@ -90,10 +93,15 @@ async def run(cfg: BotConfig, minutes: float | None) -> None:
     guardrails = Guardrails(
         cfg.max_position, cfg.max_orders_per_min, cfg.max_daily_loss_cents, cfg.kill_switch_path
     )
+    logger.warning(
+        "daily-loss guardrail inert in v0 (paper PnL not tracked); "
+        "position, rate-limit, and kill-switch guardrails are active"
+    )
     log = DecisionLog(cfg.decision_log_path)
     sig_cfg = SignalConfig(cfg.entry_dollars, cfg.max_yes_cents, cfg.min_yes_cents)
 
     position = 0
+    # v0: paper PnL not yet tracked (needs fills); daily-loss ceiling is a placeholder until then
     daily_pnl_cents = 0
 
     try:

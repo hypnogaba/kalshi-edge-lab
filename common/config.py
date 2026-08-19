@@ -27,7 +27,7 @@ def kalshi_demo() -> KalshiConfig:
         key_id=get("KALSHI_DEMO_KEY_ID", required=True),
         private_key_path=get("KALSHI_DEMO_PRIVATE_KEY_PATH", required=True),
         ws_url=get("KALSHI_DEMO_WS", required=True),
-        api_base=get("KALSHI_DEMO_API_BASE"),
+        api_base=get("KALSHI_DEMO_API_BASE", required=True),
     )
 
 
