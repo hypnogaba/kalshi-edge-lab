@@ -2,7 +2,9 @@
 """Live smoke test: signed GET /portfolio/balance against Kalshi demo REST.
 Run: uv run python -m scripts.check_auth"""
 import sys
+
 import httpx
+
 from common.config import kalshi_demo
 from sources.kalshi_ws.auth import KalshiSigner
 
