@@ -5,6 +5,7 @@ from enum import Enum
 
 class Source(str, Enum):
     KALSHI_WS = "kalshi_ws"
+    KALSHI_REST = "kalshi_rest"
     DZ_FEED = "dz_feed"
 
 
