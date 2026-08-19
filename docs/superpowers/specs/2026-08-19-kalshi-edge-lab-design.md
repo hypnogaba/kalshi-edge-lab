@@ -128,3 +128,23 @@ Reference (Binance BTCUSDT perp `bookTicker`) mid moves > X bps within T seconds
 4. Jared's written OK to publish measured latency numbers.
 
 Available now: DZ-server access. Pending: the four items above + Kalshi demo/prod keys (user is creating them).
+
+## 12. Empirical Kalshi access findings (verified 2026-08-19) + keyless REST adapter
+
+Tested against live Kalshi to settle how we get real BTC data before a prod key exists:
+
+| Access | Result |
+|---|---|
+| prod REST `/markets`, `/markets/{t}/orderbook`, `/markets/trades` — **no auth** | 200 (public) |
+| prod **WebSocket** — no auth | 401 |
+| prod **WebSocket** — demo key | 401 (demo key is not valid on the prod account) |
+| demo env — any BTC market | volume=0, no order flow (sandbox has no trading) |
+
+Consequences:
+- The demo key **cannot** access the prod WS. Real-time streaming (and the Latency Race, which needs the public WS side) requires a **real prod read-only key** (a real kalshi.com account + KYC).
+- prod REST is **public**, so real BTC **trades** are retrievable with no key. Real trade shape (REST): `{"trade_id","ticker","taker_side":"yes|no","yes_price_dollars":"0.0100","no_price_dollars":"0.9900","count_fp":"50.00","created_time"}` — prices are dollar strings, count is a float string. NOTE: this REST shape differs from the WS `trade` channel shape; the WS decoder paths remain pending prod-WS verification.
+- prod REST **orderbook depth returns empty** in every sample (no-auth and demo-key alike), including markets with trade history and near-the-money strikes. Public REST reliably yields trades but not book depth; full depth needs the authenticated prod WS.
+
+**Decision:** add a third source adapter, `sources/kalshi_rest/`, that polls the public prod REST and normalizes to `Event` — no key required. It reliably captures real BTC trade flow now (and book snapshots whenever depth is present). This lets Phase 2 (book/bot) develop against real prod trades immediately. The WS-based low-latency path and the Latency Race stay gated on a real prod key. Same `Event` interface, so nothing downstream changes when the WS/DZ sources come online.
+
+`sources/kalshi_rest/` responsibilities: a public REST client, a `decoder` (REST orderbook + REST trade JSON → `Event`, converting dollar-string prices to integer cents and `count_fp` to int, dedup trades by `trade_id`), a `poller` (interval poll of selected markets → raw frames + Events), and a near-money market selector (pick strikes closest to the Binance BTC spot).
