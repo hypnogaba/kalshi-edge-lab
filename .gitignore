@@ -1,6 +1,10 @@
 data/
-*.env
+secrets/
 .env
+*.env
+*.pem
+*.key
+claude.txt
 __pycache__/
 *.pyc
 .venv/
