@@ -23,9 +23,9 @@ The DZ feed is therefore not a precondition — it is an **upgrade**. When it ar
 ### Kalshi API facts (verified 2026-08-19)
 
 - **Public WebSocket channels:** `orderbook_delta` (snapshot + incremental deltas) and `trade`. These are the channels the race and the book builder consume.
-- **Endpoints:** prod WS `wss://api.elections.kalshi.com/trade-api/ws/v2`; demo WS `wss://demo-api.kalshi.co/trade-api/ws/v2`. Demo Trade API root `https://external-api.demo.kalshi.co/trade-api/v2`.
+- **Endpoints:** prod WS `wss://api.elections.kalshi.com/trade-api/ws/v2`; demo WS `wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2`. Demo Trade API root `https://external-api.demo.kalshi.co/trade-api/v2`.
 - **Auth:** RSA signing on every request, even for public read channels. Three headers: `KALSHI-ACCESS-KEY` (Key ID), `KALSHI-ACCESS-TIMESTAMP` (ms), `KALSHI-ACCESS-SIGNATURE` (PSS/SHA256 over `timestamp + METHOD + path`, path without query string). So an API key is required even to read.
-- **Demo account** is separate (sign up at `demo.kalshi.com`, email+password only). Its API keys are created in the demo account's profile settings, same flow as prod.
+- **Demo account** is separate (sign up at `https://demo.kalshi.co/`, note `.co` not `.com`, email+password only). Its API keys are created in the demo account's profile settings, same flow as prod.
 
 ## 3. Architecture — source-adapter + normalized Event bus
 
