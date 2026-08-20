@@ -35,5 +35,13 @@ ExecStart=<REPO_PATH>/.venv/bin/python -m bot.run --kill-switch <REPO_PATH>/data
 Restart=on-failure
 RestartSec=5
 
+# Sandboxing: the process only ever needs to write to data/ (kill switch +
+# decision log); everything else on disk should be locked down.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths=<REPO_PATH>/data
+
 [Install]
 WantedBy=multi-user.target
