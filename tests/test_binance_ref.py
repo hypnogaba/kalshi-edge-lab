@@ -1,4 +1,4 @@
-from reference.binance_ws import parse_mid
+from sources.binance_ws import parse_mid
 
 
 def test_parse_mid():
