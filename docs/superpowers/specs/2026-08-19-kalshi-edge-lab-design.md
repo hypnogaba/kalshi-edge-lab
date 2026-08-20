@@ -148,3 +148,22 @@ Consequences:
 **Decision:** add a third source adapter, `sources/kalshi_rest/`, that polls the public prod REST and normalizes to `Event` — no key required. It reliably captures real BTC trade flow now (and book snapshots whenever depth is present). This lets Phase 2 (book/bot) develop against real prod trades immediately. The WS-based low-latency path and the Latency Race stay gated on a real prod key. Same `Event` interface, so nothing downstream changes when the WS/DZ sources come online.
 
 `sources/kalshi_rest/` responsibilities: a public REST client, a `decoder` (REST orderbook + REST trade JSON → `Event`, converting dollar-string prices to integer cents and `count_fp` to int, dedup trades by `trade_id`), a `poller` (interval poll of selected markets → raw frames + Events), and a near-money market selector (pick strikes closest to the Binance BTC spot).
+
+## 13. Venue confirmed: Kalshi over DoubleZero (with the DZ wire format)
+
+The project's DoubleZero edge feed carries **Kalshi** market data. DoubleZero's value here is delivery speed: getting Kalshi data over the DZ edge multicast feed *faster than connecting directly to Kalshi's public API*. That is exactly what the Latency Race measures — **public Kalshi WS (direct) vs. DZ-edge Kalshi feed**, same host, millisecond delta.
+
+The DZ feed uses the open **`edge-feed-spec`** binary wire format (Top-of-Book & Trades v3, fixed-size little-endian, GRE-encapsulated UDP multicast on `doublezero1`). That format is **venue-agnostic and explicitly supports prediction markets** — its `InstrumentDefinition` carries Asset Class `Prediction Binary/Scalar/Categorical` and Price Bound `Bounded [0,1] (binary outcomes)`. So the `sources/dz_feed/` decoder we built (verified byte-for-byte against the spec) is correct for the Kalshi feed unchanged; the `InstrumentDefinition` on the refdata port supplies Kalshi's symbols and price/qty exponents.
+
+Note: the `malbeclabs/edge-multicast-ref` reference (group `tiredsolid`/`233.84.178.15`) used **Hyperliquid** as its *example* payload. That was a transport/format reference only — a brief Hyperliquid adapter built during exploration was **removed**. The project venue is Kalshi.
+
+### What each side of the race uses
+- **Direct baseline:** `sources/kalshi_ws/` — the public Kalshi WebSocket. Requires a Kalshi **prod** read-only key (Kalshi signs even public channels).
+- **Fast path:** `sources/dz_feed/` — the DoubleZero Kalshi edge feed. Multicast group + ports are per-deployment (discover on the server via `doublezero multicast group list`); requires an access pass for the receiving IP and the `doublezero1` tunnel. No Kalshi key needed (it's DoubleZero's feed).
+- **Runner:** `scripts/run_race.py` captures both on one host for N minutes and reports p10/p50/p90/p99 of `t_dz − t_public` (negative = DoubleZero faster) + a PNG. `--selfcheck` validates the compute path offline. See `docs/runbook.md`.
+
+### Still needed from the operator (server-side, per-deployment)
+1. The Kalshi feed's **multicast group + mktdata/refdata ports** (`doublezero multicast group list`).
+2. An **access pass** for the receiving IP + the `doublezero1` tunnel up.
+3. A Kalshi **prod read-only key** for the direct baseline (`KALSHI_PROD_KEY_ID` + `secrets/kalshi_prod_key.pem`).
+(Optional, bot only: demo-account balance to place live paper orders.)

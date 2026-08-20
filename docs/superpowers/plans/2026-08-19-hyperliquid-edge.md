@@ -1,5 +1,7 @@
 # Hyperliquid Edge — Implementation Plan (DZ feed + public WS + latency race)
 
+> **CORRECTION (2026-08-20):** The project venue is **Kalshi**, not Hyperliquid. The `edge-multicast-ref` used Hyperliquid only as its transport/wire-format *example*. The DZ **wire format** (`edge-feed-spec`) is venue-agnostic and supports prediction markets, so the `sources/dz_feed/` decoder built here is correct for the **Kalshi** feed and was kept. The Hyperliquid public-WS adapter (`sources/hl_ws/`) built here was a detour and has been **removed**. The race's public baseline is the public **Kalshi** WS (`sources/kalshi_ws/`). See design §13 and `docs/runbook.md`. This plan is retained for history.
+
 > REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Steps use `- [ ]`.
 
 **Goal:** Bring the project onto its true venue — Hyperliquid over the DoubleZero edge feed. Build (1) a public Hyperliquid WS adapter, (2) a real DZ Top-of-Book & Trades binary decoder + multicast subscriber, and (3) the latency race that compares them. Same `Event` bus and source-adapter architecture as the existing Kalshi work.
