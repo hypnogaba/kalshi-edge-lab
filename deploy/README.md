@@ -133,3 +133,37 @@ uv run python -m scripts.run_race --selfcheck
 
 This uses synthetic data and should print `SELFCHECK: PASS`. It's the same
 check `deploy/setup.sh` runs automatically at the end of setup.
+
+## 7. Free public URL via Cloudflare Tunnel (no domain needed)
+
+Do NOT try to host the dashboard on free serverless (Vercel / Cloudflare
+Pages / GitHub Pages). Kalshi and Binance **rate-limit or block shared cloud
+egress IPs** (observed: Kalshi `429`, Binance `403` from Cloudflare). The
+dashboard must run on a host with a normal IP that those APIs allow — your DZ
+server or any VPS/box — and be exposed with a tunnel. The server fetches the
+data from its own (allowed) IP; the tunnel only proxies inbound HTTP.
+
+Run the dashboard, then tunnel to it:
+
+```bash
+# 1. run the dashboard on the host (default :8080), e.g. via systemd:
+sudo cp deploy/edge-web.service /etc/systemd/system/  # edit <USER>/<REPO_PATH> first
+sudo systemctl enable --now edge-web
+
+# 2. install cloudflared, then either:
+
+# (a) quick tunnel — instant, free, no domain, RANDOM url that changes on restart:
+cloudflared tunnel --url http://localhost:8080
+#   → prints https://<random>.trycloudflare.com
+
+# (b) named tunnel — stable url on a domain you already have on Cloudflare:
+cloudflared tunnel login
+cloudflared tunnel create edge-lab
+cloudflared tunnel route dns edge-lab edge.<your-domain>
+cloudflared tunnel run --url http://localhost:8080 edge-lab
+#   → stable https://edge.<your-domain>
+```
+
+For an always-on quick tunnel, wrap step (2a) in its own systemd service.
+This is the recommended home for the live dashboard once the DZ server is up —
+one host serves both the latency race and the public dashboard.
