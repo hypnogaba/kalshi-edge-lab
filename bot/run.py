@@ -6,17 +6,22 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import re
 import time
 import uuid
 from dataclasses import replace
+from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
+import orjson
 
 from bot.config import BotConfig
 from bot.decision_log import DecisionLog
 from bot.guardrails import GuardrailBreach, Guardrails
 from bot.order_manager import OrderManager
+from bot.portfolio import snapshot as portfolio_snapshot
 from bot.signal import Decision, SignalConfig, decide
 from common.clock import now_ns
 from common.config import kalshi_demo
@@ -28,6 +33,8 @@ logger = logging.getLogger("bot.run")
 
 _THRESHOLD_SUFFIX = re.compile(r"-T\d+(?:\.\d+)?$")
 _BINANCE_SPOT_URL = "https://api.binance.com/api/v3/ticker/price"
+_BOT_STATE_PATH = Path("data/bot_state.json")
+_RECENT_MAX = 8
 
 
 def is_threshold_ticker(ticker: str) -> bool:
@@ -53,6 +60,51 @@ def build_watchlist(rest: KalshiRestClient, series: str, near: int, spot: float 
     if not threshold_tickers or spot is None:
         return []
     return nearest_markets(threshold_tickers, spot=spot, n=near)
+
+
+def safe_portfolio_snapshot(order_mgr: OrderManager) -> tuple[dict, bool]:
+    """`portfolio.snapshot`, guarded so a failed balance/positions fetch never crashes the
+    loop -- returns a zeroed snapshot and kalshi_ok=False on any error."""
+    try:
+        return portfolio_snapshot(order_mgr), True
+    except Exception as e:  # noqa: BLE001 - network/API hiccups must not kill the bot
+        logger.warning("portfolio snapshot fetch failed: %r", e)
+        return (
+            {
+                "balance_dollars": 0.0,
+                "portfolio_value_dollars": 0.0,
+                "net_position": 0,
+                "open_markets": 0,
+            },
+            False,
+        )
+
+
+def write_bot_state(
+    snap: dict,
+    paper_pnl_dollars: float,
+    kill_switch_path: str,
+    kalshi_ok: bool,
+    recent: list[dict],
+    path: Path = _BOT_STATE_PATH,
+) -> None:
+    """Atomic write (tmp file + os.replace) of the live bot-state file the dashboard reads."""
+    mode = "dry-run" if os.path.exists(kill_switch_path) else "live"
+    state = {
+        "mode": mode,
+        "updated_iso": datetime.now(UTC).isoformat(),
+        "balance_dollars": snap.get("balance_dollars", 0.0),
+        "portfolio_value_dollars": snap.get("portfolio_value_dollars", 0.0),
+        "paper_pnl_dollars": paper_pnl_dollars,
+        "net_position": snap.get("net_position", 0),
+        "open_markets": snap.get("open_markets", 0),
+        "recent": recent[-_RECENT_MAX:],
+        "kalshi_ok": kalshi_ok,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_bytes(orjson.dumps(state))
+    os.replace(tmp_path, path)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -92,16 +144,18 @@ async def run(cfg: BotConfig, minutes: float | None) -> None:
     guardrails = Guardrails(
         cfg.max_position, cfg.max_orders_per_min, cfg.max_daily_loss_cents, cfg.kill_switch_path
     )
-    logger.warning(
-        "daily-loss guardrail inert in v0 (paper PnL not tracked); "
-        "position, rate-limit, and kill-switch guardrails are active"
-    )
     log = DecisionLog(cfg.decision_log_path)
     sig_cfg = SignalConfig(cfg.entry_dollars, cfg.max_yes_cents, cfg.min_yes_cents)
 
-    position = 0
-    # v0: paper PnL not yet tracked (needs fills); daily-loss ceiling is a placeholder until then
-    daily_pnl_cents = 0
+    recent_decisions: list[dict] = []
+
+    # Session-start portfolio value anchors paper PnL (portfolio_value_dollars - session_start_value).
+    # A failed fetch at startup must not crash the bot: fall back to 0 and mark it unknown so the
+    # first loop's paper PnL just reads as 0 rather than a bogus swing.
+    start_snap, start_ok = safe_portfolio_snapshot(order_mgr)
+    session_start_value = start_snap["portfolio_value_dollars"] if start_ok else 0.0
+    if not start_ok:
+        logger.warning("could not fetch starting portfolio value; paper PnL baseline set to 0")
 
     try:
         seed_spot = binance.mid if binance.mid is not None else fetch_one_shot_spot()
@@ -110,6 +164,10 @@ async def run(cfg: BotConfig, minutes: float | None) -> None:
 
         deadline = time.monotonic() + minutes * 60 if minutes is not None else None
         while deadline is None or time.monotonic() < deadline:
+            snap, kalshi_ok = safe_portfolio_snapshot(order_mgr)
+            paper_pnl_dollars = snap["portfolio_value_dollars"] - session_start_value
+            daily_pnl_cents = round(paper_pnl_dollars * 100)
+
             for ticker in watchlist:
                 try:
                     trades = rest.trades(ticker, limit=1)
@@ -124,20 +182,35 @@ async def run(cfg: BotConfig, minutes: float | None) -> None:
                             now_ns(), ticker, kalshi_yes_cents, spot, Decision.HOLD.value,
                             "hold", {"reason": "missing spot or trade data"},
                         )
+                        recent_decisions.append(
+                            {"market": ticker, "signal": Decision.HOLD.value, "action": "hold",
+                             "yes_cents": kalshi_yes_cents, "spot": spot}
+                        )
                         continue
 
                     sig = decide(strike, True, kalshi_yes_cents, spot, sig_cfg)
 
                     if sig == Decision.HOLD:
                         log.record(now_ns(), ticker, kalshi_yes_cents, spot, sig.value, "hold", None)
+                        recent_decisions.append(
+                            {"market": ticker, "signal": sig.value, "action": "hold",
+                             "yes_cents": kalshi_yes_cents, "spot": spot}
+                        )
                         continue
 
                     try:
-                        guardrails.check(position, cfg.order_count, daily_pnl_cents, now_s=time.monotonic())
+                        guardrails.check(
+                            snap["net_position"], cfg.order_count, daily_pnl_cents,
+                            now_s=time.monotonic(),
+                        )
                     except GuardrailBreach as breach:
                         log.record(
                             now_ns(), ticker, kalshi_yes_cents, spot, sig.value,
                             "blocked", {"reason": str(breach)},
+                        )
+                        recent_decisions.append(
+                            {"market": ticker, "signal": sig.value, "action": "blocked",
+                             "yes_cents": kalshi_yes_cents, "spot": spot}
                         )
                         continue
 
@@ -146,13 +219,24 @@ async def run(cfg: BotConfig, minutes: float | None) -> None:
                         ticker=ticker, buy_yes=(sig == Decision.BUY_YES),
                         count=cfg.order_count, price_cents=cfg.order_price_cents, coid=coid,
                     )
-                    position += cfg.order_count
                     log.record(
                         now_ns(), ticker, kalshi_yes_cents, spot, sig.value,
                         "placed", {"order_id": order_id, "client_order_id": coid},
                     )
+                    recent_decisions.append(
+                        {"market": ticker, "signal": sig.value, "action": "placed",
+                         "yes_cents": kalshi_yes_cents, "spot": spot}
+                    )
                 except Exception as e:  # noqa: BLE001 - one bad market must not kill the loop
                     print(f"[bot] error polling {ticker}: {e!r}")
+
+            try:
+                write_bot_state(
+                    snap, paper_pnl_dollars, cfg.kill_switch_path, kalshi_ok,
+                    recent_decisions,
+                )
+            except Exception as e:  # noqa: BLE001 - state file is best-effort, never fatal
+                logger.warning("failed to write bot_state.json: %r", e)
 
             await asyncio.sleep(cfg.poll_interval_s)
     finally:
