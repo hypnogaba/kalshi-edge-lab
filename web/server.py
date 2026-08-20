@@ -187,7 +187,7 @@ _PAGE_HTML = """<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DoubleZero Edge Lab — live</title>
+<title>Edge Latency Lab — live</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
@@ -258,7 +258,7 @@ _PAGE_HTML = """<!doctype html>
 
 <header class="bar">
   <div class="wrap bar-in">
-    <h1>DoubleZero Edge Lab — live</h1>
+    <h1>Edge Latency Lab — live</h1>
     <span class="pill pending" id="dzpill">DZ feed: pending</span>
     <span class="spacer"></span>
     <span class="updated mono" id="updated">updated —</span>
@@ -289,6 +289,7 @@ _PAGE_HTML = """<!doctype html>
 <footer>
   <div class="wrap">
     <a href="https://github.com/hypnogaba/kalshi-edge-lab">github.com/hypnogaba/kalshi-edge-lab</a>
+    <p style="margin:10px 0 0; font-size:11.5px; color:var(--faint)">Independent project. Not affiliated with, endorsed by, or an official product of DoubleZero or Kalshi — those names refer only to the systems being measured.</p>
   </div>
 </footer>
 

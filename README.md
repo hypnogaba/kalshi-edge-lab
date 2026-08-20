@@ -1,4 +1,4 @@
-# ⚡ DoubleZero Edge Lab
+# ⚡ Edge Latency Lab
 
 **Benchmark and consume the DoubleZero Kalshi edge feed.** A single-clock latency
 benchmark against the public Kalshi WebSocket, a forkable demo bot, and an open
@@ -7,6 +7,10 @@ binary decoder for the feed — real numbers, reproducible from source, open cod
 ![CI](https://github.com/hypnogaba/kalshi-edge-lab/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.12-blue.svg)
+
+> **Independent project.** This is a personal, independent project. It is not
+> affiliated with, endorsed by, or an official product of DoubleZero or
+> Kalshi. Those names refer only to the systems being measured.
 
 > **What / why.** DoubleZero delivers Kalshi market data over a private edge
 > network. This lab measures — in milliseconds, with open code — how much sooner
@@ -104,7 +108,7 @@ bot/                     Reference demo bot: signal, guardrails, order manager, 
 dash/  web/              Terminal dashboard + live web dashboard (FastAPI/SSE)
 scripts/                 run_race, live, race_demo, discover_markets, check_auth …
 deploy/                  Server setup, run scripts, systemd units, tunnel guide
-docs/                    Methodology, runbook, feed notes, session log, design/plans
+docs/                    Methodology, runbook, feed notes, session log
 ```
 
 ---

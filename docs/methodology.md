@@ -2,26 +2,26 @@
 
 This document states exactly what the latency benchmark measures, how, and why the numbers are fair. Every figure the project publishes is reproducible from this repository. Written to hold up to hostile scrutiny: if a claim here is wrong, the code contradicts it.
 
-## What we measure
+## What this measures
 
 The **arrival-time delta of the same Kalshi market event delivered two ways to one host**:
 
 - **Direct baseline** — the public Kalshi WebSocket (`sources/kalshi_ws/`).
 - **Fast path** — the DoubleZero Kalshi edge multicast feed (`sources/dz_feed/`).
 
-For each event that appears on both feeds we compute:
+For each event that appears on both feeds this is computed:
 
 ```
 delta_ns = t_arrival(dz) − t_arrival(public)      # negative ⇒ DoubleZero delivered it first
 ```
 
-We report the **distribution** of `delta_ns` (p10 / p50 / p90 / p99, mean, min, max), the **match rate**, and **discards** — never a single cherry-picked number.
+The report is the **distribution** of `delta_ns` (p10 / p50 / p90 / p99, mean, min, max), the **match rate**, and **discards** — never a single cherry-picked number.
 
 ## How the timing is done (and why it is fair)
 
-1. **One host, one clock.** Both feeds are received on the *same* machine and each datagram is stamped on arrival with a single monotonic clock — `CLOCK_MONOTONIC_RAW` (`common/clock.py`). We **never** compare timestamps taken on different machines, so there is no clock-skew or NTP error in the measurement. The delta is a difference of two readings from the *same* clock, which is exactly what a co-located consumer experiences.
+1. **One host, one clock.** Both feeds are received on the *same* machine and each datagram is stamped on arrival with a single monotonic clock — `CLOCK_MONOTONIC_RAW` (`common/clock.py`). Timestamps taken on different machines are **never** compared, so there is no clock-skew or NTP error in the measurement. The delta is a difference of two readings from the *same* clock, which is exactly what a co-located consumer experiences.
 2. **Stamp at the edge of the process.** Arrival is stamped the moment bytes are read from the socket, before any decoding, so decode cost is excluded from the delta and is identical for repeated runs.
-3. **Same market, same event.** We match the *same* trade across the two feeds:
+3. **Same market, same event.** The *same* trade is matched across the two feeds:
    - **Primary key: exact trade id.** Both feeds carry the venue trade id (`Event.seq`); an id match is unambiguous.
    - **Fallback:** same market + equal price and size, nearest-in-time within a bounded window (`--window-ms`, default 50 ms). Each event on each side is matched at most once (`race/match.py`), so a single event can never inflate the sample.
 4. **Distribution over a real window.** Numbers are reported over a capture spanning active *and* quiet periods (target ≥ 2 h, ≥ 500 matched pairs), not a hand-picked burst.
@@ -31,7 +31,7 @@ We report the **distribution** of `delta_ns` (p10 / p50 / p90 / p99, mean, min, 
 - The public Kalshi WS is TCP + TLS over the public internet. Kalshi authenticates the socket (it signs even public channels); authentication happens once at connect and is not on the per-message path, so it does not bias the per-event delta.
 - The DoubleZero feed is GRE-encapsulated UDP multicast delivered over DoubleZero's network and terminated on the `doublezero1` tunnel; the kernel de-encapsulates GRE so the application reads plain UDP. The receiver is `sources/dz_feed/capture.py`.
 
-These are genuinely different transports — that is the point of the comparison. We do not normalize it away; we measure what a consumer actually gets from each.
+These are genuinely different transports — that is the point of the comparison. This is not normalized away; the measurement is of what a consumer actually gets from each.
 
 ## Reproducibility
 
@@ -69,6 +69,6 @@ The self-check feeds the pipeline one stream and a copy of it delayed by a known
 
 The harness, decoder, and self-check are complete and pass. **Live edge-vs-public numbers are pending the Kalshi feed being published on DoubleZero and an access pass for the receiving host** — that is an external dependency on the DoubleZero feed operator, not on this code. The moment the feed is available, the command above produces the numbers and this page's claims become measured, not asserted.
 
-## No claims we can't back
+## No claims that can't be backed
 
 No profit is claimed anywhere. The demo bot's signal is an openly labelled naïve example. The only quantitative claim this project will make is the measured latency distribution above, reproducible by anyone with the same repo and feed access.

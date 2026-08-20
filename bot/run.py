@@ -1,7 +1,6 @@
 """Main loop wiring: poll real Kalshi trades + Binance spot -> naive v0 signal -> guardrails ->
 Kalshi DEMO order -> decision log. DEMO only. Not unit-tested here — validated live via a
-signal-only dry run (kill switch engaged, zero orders placed); see
-docs/superpowers/plans/2026-08-19-phase2-demo-bot.md Task 7."""
+signal-only dry run (kill switch engaged, zero orders placed)."""
 from __future__ import annotations
 
 import argparse
