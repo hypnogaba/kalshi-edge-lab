@@ -1,5 +1,9 @@
 # kalshi-edge-lab
 
+![CI](https://github.com/hypnogaba/kalshi-edge-lab/actions/workflows/ci.yml/badge.svg)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
+![Python](https://img.shields.io/badge/python-3.12-blue.svg)
+
 Benchmark and consume the DoubleZero Kalshi edge feed. It measures whether
 DZ's multicast market-data feed delivers Kalshi trades faster than the
 public internet, and ships a small demo bot that trades on the normalized
@@ -24,6 +28,26 @@ uv sync
 uv run pytest -q
 uv run python -m scripts.run_race --selfcheck   # validates the matcher/stats offline
 ```
+
+## Live example
+
+A real terminal snapshot from `scripts.live` — public Kalshi + Binance data,
+the demo bot's signal, no keys, no orders:
+
+```text
+Kalshi × DoubleZero -- live   ·   BTC spot (Binance): $69,739.99   ·   DRY-RUN -- bot brain, no orders
+Market (BTC ≥ strike?)       Strike     Yes¢   Spot−Strike   Signal
+KXBTCD-…-T69749.99           $69,750     45      -10.00       HOLD
+KXBTCD-…-T69499.99           $69,500     53     +240.00       BUY YES
+KXBTCD-…-T69999.99           $70,000     39     -260.00       BUY NO
+KXBTCD-…-T70249.99           $70,250     30     -510.00       BUY NO
+```
+
+run it: `uv run python -m scripts.live`
+
+The [portal](dash/portal.html) renders the same story for a non-technical
+audience; the DZ edge feed numbers there are pending a DoubleZero-connected
+host to produce real edge-vs-public figures.
 
 ## Run the real latency race (server)
 
