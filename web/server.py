@@ -34,6 +34,7 @@ from sources.kalshi_rest.selector import nearest_markets, parse_strike
 REFRESH_SECONDS = float(os.environ.get("EDGE_WEB_INTERVAL", "3"))
 NEAR = int(os.environ.get("EDGE_WEB_NEAR", "8"))
 RACE_STATS_PATH = Path("data/race/race_stats.json")
+WHATIF_PATH = Path("data/race/whatif.json")
 BOT_STATE_PATH = Path("data/bot_state.json")
 _SERIES = ("KXBTC", "KXBTCD")
 
@@ -45,6 +46,7 @@ STATE: dict = {
     "markets": [],
     "dz_feed": "pending",
     "race": None,
+    "whatif": None,
     "bot": None,
 }
 
@@ -129,6 +131,14 @@ async def refresh_once(client: KalshiRestClient, sig_cfg: SignalConfig) -> None:
     else:
         STATE["race"] = None
         STATE["dz_feed"] = "pending"
+
+    if WHATIF_PATH.exists():
+        try:
+            STATE["whatif"] = json.loads(WHATIF_PATH.read_text())
+        except Exception:  # noqa: BLE001 - malformed file, treat as not-ready
+            STATE["whatif"] = None
+    else:
+        STATE["whatif"] = None
 
     if BOT_STATE_PATH.exists():
         try:
@@ -292,6 +302,25 @@ _PAGE_HTML = """<!doctype html>
   .edge-subnote{margin:10px 0 0; font-family:"IBM Plex Mono"; font-size:12px; color:var(--faint)}
   .edge-statrow{margin:6px 0 0; font-family:"IBM Plex Mono"; font-size:12px; color:var(--muted)}
 
+  .whatif-panel{margin:26px 0 34px}
+  .whatif-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px}
+  .whatif-panel h2{font-family:"Archivo",system-ui,sans-serif; font-weight:800;
+    letter-spacing:-.01em; font-size:21px; margin:0}
+  .whatif-explainer{font-family:"IBM Plex Mono"; font-size:12.5px; color:var(--muted);
+    margin:0 0 20px; max-width:620px}
+  .whatif-card{background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    box-shadow:var(--shadow); padding:22px 24px}
+  .whatif-headline{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap}
+  .whatif-dollar{font-family:"Archivo",system-ui,sans-serif; font-weight:800;
+    font-size:32px; letter-spacing:-.01em}
+  .whatif-caption{font-family:"IBM Plex Mono"; font-size:11px; letter-spacing:.04em;
+    text-transform:uppercase; color:var(--faint)}
+  .whatif-statrow{margin:10px 0 0; font-family:"IBM Plex Mono"; font-size:12.5px; color:var(--muted)}
+  .whatif-subnote{margin:6px 0 0; font-family:"IBM Plex Mono"; font-size:12px; color:var(--faint)}
+  .whatif-ticker{margin-top:14px; padding-top:14px; border-top:1px solid var(--line)}
+  .whatif-ticker-row{font-family:"IBM Plex Mono"; font-size:12px; color:var(--muted);
+    padding:3px 0}
+
   .bot-panel{margin:26px 0 34px}
   .bot-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px}
   .bot-panel h2{font-family:"Archivo",system-ui,sans-serif; font-weight:800;
@@ -355,6 +384,23 @@ _PAGE_HTML = """<!doctype html>
         <p class="edge-statrow mono" id="edge-statrow">matched &mdash; trades &middot; &mdash;</p>
         <p class="edge-subnote" id="edge-subnote">Real numbers appear the moment the DoubleZero feed is connected.</p>
       </div>
+    </div>
+  </section>
+
+  <section class="whatif-panel" aria-labelledby="whatif-title">
+    <div class="whatif-head">
+      <h2 id="whatif-title">What-if with DoubleZero</h2>
+      <span class="pill pending" id="whatif-pill">awaiting feed</span>
+    </div>
+    <p class="whatif-explainer">If a bot could act the instant the DoubleZero feed saw each matched trade, instead of waiting for the public feed to catch up &mdash; how much would that have been worth? Modeled on captured trades, top-of-book, no slippage.</p>
+    <div class="whatif-card">
+      <div class="whatif-headline">
+        <span class="whatif-dollar mono" id="whatif-dollars">&mdash;</span>
+        <span class="whatif-caption">theoretical / modeled &mdash; not real fills</span>
+      </div>
+      <p class="whatif-statrow mono" id="whatif-statrow">&mdash; theoretical trades &middot; &mdash; median &Delta; ms &middot; &mdash; win rate</p>
+      <p class="whatif-subnote" id="whatif-subnote">Real numbers appear once both feeds are captured.</p>
+      <div class="whatif-ticker" id="whatif-ticker" style="display:none"></div>
     </div>
   </section>
 
@@ -460,6 +506,7 @@ _PAGE_HTML = """<!doctype html>
     }
 
     renderEdge(state);
+    renderWhatif(state);
     renderBot(state);
     renderUpdated();
   }
@@ -567,6 +614,57 @@ _PAGE_HTML = """<!doctype html>
     } else {
       statrow.textContent = 'matched — trades · —';
       subnote.style.display = '';
+    }
+  }
+
+  function fmtCents(n){
+    if(n == null || isNaN(n)) return '—';
+    var v = Number(n);
+    var sign = v > 0 ? '+' : (v < 0 ? '−' : '');
+    return sign + Math.abs(v).toFixed(1) + '¢';
+  }
+
+  function renderWhatif(state){
+    var pill = document.getElementById('whatif-pill');
+    var dollarsEl = document.getElementById('whatif-dollars');
+    var statrow = document.getElementById('whatif-statrow');
+    var subnote = document.getElementById('whatif-subnote');
+    var ticker = document.getElementById('whatif-ticker');
+
+    var w = state && state.whatif;
+    var ready = !!(w && typeof w.n === 'number' && w.n > 0 &&
+      typeof w.total_edge_dollars === 'number');
+
+    pill.textContent = ready ? 'modeled' : 'awaiting feed';
+    pill.className = 'pill ' + (ready ? 'live' : 'pending');
+
+    if(!ready){
+      dollarsEl.textContent = '—';
+      statrow.textContent = '— theoretical trades · — median Δ ms · — win rate';
+      subnote.style.display = '';
+      ticker.style.display = 'none';
+      ticker.innerHTML = '';
+      return;
+    }
+
+    dollarsEl.textContent = fmtSigned(w.total_edge_dollars);
+    var medianDelta = (typeof w.median_delta_ms === 'number') ? w.median_delta_ms.toFixed(1) : '—';
+    var winRate = (typeof w.win_rate === 'number') ? w.win_rate.toFixed(1) : '—';
+    statrow.textContent = w.n + ' theoretical trades · median Δ ' + medianDelta + ' ms · ' + winRate + '% win rate';
+    subnote.style.display = 'none';
+
+    var samples = Array.isArray(w.samples) ? w.samples : [];
+    if(samples.length){
+      ticker.style.display = '';
+      ticker.innerHTML = samples.map(function(s){
+        var edge = (s && typeof s.edge_price === 'number') ? s.edge_price.toFixed(1) : '—';
+        var pub = (s && typeof s.public_price === 'number') ? s.public_price.toFixed(1) : '—';
+        var cents = fmtCents(s && s.edge_cents);
+        return '<div class="whatif-ticker-row">edge @ ' + edge + '¢ vs public @ ' + pub + '¢ · ' + cents + '</div>';
+      }).join('');
+    } else {
+      ticker.style.display = 'none';
+      ticker.innerHTML = '';
     }
   }
 
