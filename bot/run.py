@@ -25,7 +25,7 @@ from bot.portfolio import snapshot as portfolio_snapshot
 from bot.signal import Decision, SignalConfig, decide
 from common.clock import now_ns
 from common.config import kalshi_demo
-from reference.binance_ws import BinanceRef
+from sources.binance_ws import BinanceRef
 from sources.kalshi_rest.client import KalshiRestClient
 from sources.kalshi_rest.selector import nearest_markets, parse_strike
 

@@ -106,6 +106,7 @@ it with a Cloudflare Tunnel. See [`deploy/README.md`](deploy/README.md) §7.
 ```
 common/                  Event, clock, storage, config, reconnecting WS client
 sources/
+  binance_ws.py          Binance BTC reference (REST + WS)
   kalshi_ws/             Public Kalshi WebSocket adapter (capture + decode)
   kalshi_rest/           Public Kalshi REST adapter (keyless poller + decode)
   dz_feed/               DoubleZero edge feed: multicast receiver + binary decoder
