@@ -160,3 +160,43 @@ def test_module_level_decode_matches_signature():
     frame = _frame([_trade(1, aggressor=1, price_raw=100, qty_raw=1, trade_id=1)])
     events = dz_decoder.decode(frame, 0)
     assert len(events) == 1
+
+
+def test_truncated_quote_body_returns_no_raise():
+    decoder = DzDecoder()
+    # Declares a Quote (0x03) but msg_length (8) is far short of the 64B a
+    # real Quote message needs (4B header + 60B body). The buffer ends right
+    # where the declared length says, so the frame-level offset+msg_length
+    # check passes -- but the fixed-size QUOTE_BODY unpack would run past
+    # the end of the buffer without a per-type size check.
+    truncated_quote = _msg_header(0x03, 8) + b"\x00" * 4
+    frame = _frame([truncated_quote])
+
+    events = decoder.decode(frame, t_arrival_ns=0)
+
+    assert events == []
+
+
+def test_trailing_garbage_after_valid_quote_does_not_crash():
+    decoder = DzDecoder()
+    valid_quote = _quote(42, bid_price_raw=100, bid_qty_raw=1,
+                          ask_price_raw=101, ask_qty_raw=2)
+    # A second "message" whose header claims Quote (0x03) but whose declared
+    # length leaves no room for a real 60B body -- trailing garbage bytes.
+    garbage = _msg_header(0x03, 6) + b"\xff\xff"
+    frame = _frame([valid_quote, garbage])
+
+    events = decoder.decode(frame, t_arrival_ns=0)
+
+    assert len(events) == 2
+    assert events[0].side == Side.BID
+    assert events[1].side == Side.ASK
+
+
+def test_short_random_buffer_with_valid_magic_returns_empty():
+    decoder = DzDecoder()
+    # Just the magic bytes plus a handful of random junk -- far short of a
+    # full 24B frame header.
+    raw = struct.pack("<H", _MAGIC) + b"\x01\x02\x03\x04\x05"
+
+    assert decoder.decode(raw, t_arrival_ns=0) == []

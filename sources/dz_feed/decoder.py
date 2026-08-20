@@ -44,6 +44,14 @@ _INSTRUMENT_DEFINITION_BODY = struct.Struct("<IH64s8s8sBbbBqQQQBBH")
 _QUOTE_BODY = struct.Struct("<IHBBQqQqQHH")
 _TRADE_BODY = struct.Struct("<IHBBQqQQQ")
 
+# Per-message-type body size, used to guard fixed-size unpack_from calls
+# against a declared msg_length that is smaller than the type's real body.
+_BODY_SIZE_BY_TYPE = {
+    0x02: _INSTRUMENT_DEFINITION_BODY.size,
+    0x03: _QUOTE_BODY.size,
+    0x04: _TRADE_BODY.size,
+}
+
 
 class DzDecoder:
     """Decodes DZ Top-of-Book & Trades v3 frames into normalized Events."""
@@ -68,13 +76,25 @@ class DzDecoder:
             if msg_length == 0 or offset + msg_length > len(raw):
                 break
 
-            if msg_type == 0x02:
-                self._decode_instrument_definition(raw, offset)
-            elif msg_type == 0x03:
-                events.extend(self._decode_quote(raw, offset, t_arrival_ns, seq))
-            elif msg_type == 0x04:
-                events.append(self._decode_trade(raw, offset, t_arrival_ns))
-            # 0x01 Heartbeat, 0x06 EndOfSession, and unknown types carry no event.
+            # A malicious/corrupt frame can declare a small msg_length (which
+            # passes the check above) while claiming a type whose body decoder
+            # unpacks a larger FIXED struct size. Require the buffer to
+            # actually hold that type's full body before dispatching.
+            body_size = _BODY_SIZE_BY_TYPE.get(msg_type)
+            if body_size is not None and offset + _MSG_HEADER.size + body_size > len(raw):
+                break
+
+            try:
+                if msg_type == 0x02:
+                    self._decode_instrument_definition(raw, offset)
+                elif msg_type == 0x03:
+                    events.extend(self._decode_quote(raw, offset, t_arrival_ns, seq))
+                elif msg_type == 0x04:
+                    events.append(self._decode_trade(raw, offset, t_arrival_ns))
+                # 0x01 Heartbeat, 0x06 EndOfSession, and unknown types carry no event.
+            except struct.error:
+                # Belt-and-suspenders: never let a malformed body escape decode().
+                break
 
             offset += msg_length
         return events

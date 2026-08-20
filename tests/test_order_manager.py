@@ -16,8 +16,8 @@ def _om(handler):
     # inject a fake signer and a MockTransport client directly, as the test needs no real network/key.
     om = OrderManager.__new__(OrderManager)
     om._signer = _FakeSigner()
-    om._base = "https://d"
-    om._c = httpx.Client(base_url="https://d", transport=httpx.MockTransport(handler))
+    om._base = "https://d.demo.kalshi.co"
+    om._c = httpx.Client(base_url="https://d.demo.kalshi.co", transport=httpx.MockTransport(handler))
     return om
 
 
