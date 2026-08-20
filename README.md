@@ -1,94 +1,145 @@
-# kalshi-edge-lab
+# ⚡ DoubleZero Edge Lab
+
+**Benchmark and consume the DoubleZero Kalshi edge feed.** A single-clock latency
+benchmark against the public Kalshi WebSocket, a forkable demo bot, and an open
+binary decoder for the feed — real numbers, reproducible from source, open code.
 
 ![CI](https://github.com/hypnogaba/kalshi-edge-lab/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.12-blue.svg)
 
-Benchmark and consume the DoubleZero Kalshi edge feed. It measures whether
-DZ's multicast market-data feed delivers Kalshi trades faster than the
-public internet, and ships a small demo bot that trades on the normalized
-event stream.
+> **What / why.** DoubleZero delivers Kalshi market data over a private edge
+> network. This lab measures — in milliseconds, with open code — how much sooner
+> that feed reaches you than connecting to Kalshi directly, and gives you the
+> tools to consume it. Same market, two pipes, one host, honest numbers.
 
-## What's here
+---
 
-- `scripts/run_race.py` — the latency benchmark. Captures the public Kalshi
-  WS and the DZ edge feed on one host at once, matches trades between them,
-  and reports the arrival-time delta (`t_dz - t_public`).
-- `bot/` — a reference demo bot: polls Kalshi + Binance, runs a naive signal
-  through guardrails, and places Kalshi **DEMO** orders (no real money).
-- `sources/dz_feed/` — an open binary decoder for the DoubleZero edge feed,
-  verified against `edge-feed-spec`. `sources/kalshi_ws/` and
-  `sources/kalshi_rest/` are the public Kalshi adapters (WS + REST). All
-  three normalize into one `common/event.py` `Event`.
+## Three results
 
-## Quickstart (laptop, no feed/keys)
+| # | Result | What it is |
+|---|--------|------------|
+| **01** | **Latency benchmark** | Captures the same Kalshi trades two ways on one host — public Kalshi WS vs. the DoubleZero edge feed — matches each trade by id, and reports `t_dz − t_public` (p10/50/90/99). One monotonic clock; no cross-machine timestamps. → [`scripts/run_race.py`](scripts/run_race.py) |
+| **02** | **Reference demo bot** | A minimal, forkable bot on Kalshi's **demo** env: real trades + reference price → signal → hard guardrails → order → append-only decision log. Swap one file (`bot/signal.py`) for your strategy. → [`bot/`](bot/) |
+| **03** | **Open feed decoder** | Join the multicast group, decode the fixed-size binary frames, get normalized `Event`s. Verified byte-for-byte against [`edge-feed-spec`](https://github.com/malbeclabs/edge-feed-spec). The public Kalshi WS decodes to the *same* type. → [`sources/`](sources/) |
+
+Everything normalizes to one [`common/event.py`](common/event.py) `Event`, so sources are swappable.
+
+---
+
+## Quickstart (laptop — no keys, no feed)
 
 ```bash
 uv sync
 uv run pytest -q
-uv run python -m scripts.run_race --selfcheck   # validates the matcher/stats offline
+uv run python -m scripts.run_race --selfcheck   # validates the matcher/stats offline (+3.000 ms recovered)
+uv run python -m scripts.live                    # live Kalshi + Binance + the bot's signals, in your terminal
 ```
 
-## Live example
+`scripts/live` is the demo bot's brain, visible: it pulls real Kalshi BTC
+markets (keyless public REST) + Binance spot and prints the live signal board.
 
-A real terminal snapshot from `scripts.live` — public Kalshi + Binance data,
-the demo bot's signal, no keys, no orders:
+---
 
-```text
-Kalshi × DoubleZero -- live   ·   BTC spot (Binance): $69,739.99   ·   DRY-RUN -- bot brain, no orders
-Market (BTC ≥ strike?)       Strike     Yes¢   Spot−Strike   Signal
-KXBTCD-…-T69749.99           $69,750     45      -10.00       HOLD
-KXBTCD-…-T69499.99           $69,500     53     +240.00       BUY YES
-KXBTCD-…-T69999.99           $70,000     39     -260.00       BUY NO
-KXBTCD-…-T70249.99           $70,250     30     -510.00       BUY NO
+## How it works
+
+```mermaid
+flowchart LR
+    A[Kalshi public WS<br/>direct baseline] --> E{{Event<br/>normalized}}
+    B[DoubleZero edge feed<br/>binary multicast] --> E
+    C[Kalshi REST<br/>keyless] --> E
+    E --> R[Latency race<br/>match / stats / TUI]
+    E --> Bot[Demo bot<br/>signal / guardrails / orders]
+    E --> D[Dashboard<br/>terminal / web]
 ```
 
-run it: `uv run python -m scripts.live`
+Each **source** is an isolated adapter (capture → decode → `Event`). Downstream
+never knows which source produced an event, so the DoubleZero feed drops in with
+zero changes once it's connected.
 
-The [portal](dash/portal.html) renders the same story for a non-technical
-audience; the DZ edge feed numbers there are pending a DoubleZero-connected
-host to produce real edge-vs-public figures.
+---
 
-## Run the real latency race (server)
+## The DoubleZero Kalshi edge feed
 
-The DZ edge feed only arrives on a Linux host connected to DoubleZero — a
-laptop can't join that multicast group, so the real race has to run there.
-See `deploy/README.md` and `docs/runbook.md` for setup. Once the host is
-wired up:
+The feed is GRE-encapsulated UDP multicast delivered over DoubleZero and
+terminated on the `doublezero1` tunnel; the kernel de-encapsulates GRE so the
+app reads plain UDP. Wire format: the open
+[**Top-of-Book & Trades v3**](https://github.com/malbeclabs/edge-feed-spec/blob/main/top-of-book/spec.md)
+binary protocol (fixed-size, little-endian) — which natively supports prediction
+markets. `sources/dz_feed/` decodes it and a multicast receiver captures it.
+
+Kalshi perps feed groups on DoubleZero mainnet-beta:
+`edge-kalshi-perps-tob` (Top-of-Book & Trades) and `edge-kalshi-perps-mbp`
+(Market-by-Price). Group + ports are per-deployment — discover on the host with
+`doublezero multicast group list`.
+
+---
+
+## Live web dashboard
+
+A monochrome, theme-aware dashboard ([`web/server.py`](web/server.py), FastAPI + SSE)
+that serves real Kalshi + Binance + bot signals live, and surfaces the latency
+race once the feed is connected.
 
 ```bash
-MARKET=<kalshi_ticker> GROUP=<mcast> IFACE=<recv_ip> bash deploy/run_race.sh
+uv run python -m web.server        # http://localhost:8080
 ```
 
-## Layout
+To publish it for free without a domain, run it on a normal-IP host (a VPS / the
+DZ server — **not** free serverless, which Kalshi/Binance rate-limit) and expose
+it with a Cloudflare Tunnel. See [`deploy/README.md`](deploy/README.md) §7.
+
+---
+
+## Repo layout
 
 ```
-common/       Shared Event type, config, storage (frame log), clock, WS client
+common/                  Event, clock, storage, config, reconnecting WS client
 sources/
-  kalshi_ws/  Public Kalshi WebSocket adapter (capture + decode)
-  kalshi_rest/ Public Kalshi REST adapter (poller + decode, no key needed)
-  dz_feed/    DoubleZero edge feed: UDP multicast capture + binary decoder
-race/         Trade matcher, latency stats, report rendering, live TUI
-bot/          Reference demo bot: signal, guardrails, order manager, decision log
-dash/         Dashboard TUI / HTML portal for race and bot output
-scripts/      CLI entry points (run_race, discover_markets, verify_capture, check_auth)
-deploy/       Server setup + run scripts for the DZ-connected host
-docs/         Methodology, runbook, env reference, feed notes
+  kalshi_ws/             Public Kalshi WebSocket adapter (capture + decode)
+  kalshi_rest/           Public Kalshi REST adapter (keyless poller + decode)
+  dz_feed/               DoubleZero edge feed: multicast receiver + binary decoder
+race/                    Trade matcher, latency stats, PNG report, split-screen TUI
+bot/                     Reference demo bot: signal, guardrails, order manager, log
+dash/  web/              Terminal dashboard + live web dashboard (FastAPI/SSE)
+scripts/                 run_race, live, race_demo, discover_markets, check_auth …
+deploy/                  Server setup, run scripts, systemd units, tunnel guide
+docs/                    Methodology, runbook, feed notes, session log, design/plans
 ```
 
-## How the numbers are made
+---
 
-The benchmark method — single host, one monotonic clock, per-trade id matching,
-the exact metric, threats to validity, and how the tooling is validated offline —
-is written up in **[`docs/methodology.md`](docs/methodology.md)**. Every published
-figure is reproducible from this repo.
+## Reproducibility & method
 
-## Data & wire format
+Every published latency figure is reproducible from this repo. The method —
+single host, one monotonic clock (`CLOCK_MONOTONIC_RAW`), per-trade-id matching,
+the exact metric, threats to validity, and how the tooling is validated offline
+— is written up in **[`docs/methodology.md`](docs/methodology.md)**. Written to
+hold up to hostile review.
 
-The DZ feed uses the open `edge-feed-spec` Top-of-Book & Trades v3 binary
-format (https://github.com/malbeclabs/edge-feed-spec); public Kalshi is
-consumed via WS (prod key required) and REST (keyless).
+Run the real benchmark on a DoubleZero-connected host: see
+[`docs/runbook.md`](docs/runbook.md) and [`deploy/README.md`](deploy/README.md).
+
+---
+
+## Status
+
+- ✅ Full pipeline built and tested (race, bot, decoder, adapters); CI green.
+- ✅ DoubleZero decoder verified byte-for-byte against the wire spec.
+- ✅ Kalshi feed is **live on DoubleZero** (`edge-kalshi-perps-tob`).
+- ⏳ Real edge-vs-public numbers pending a subscriber access pass for the
+  receiving host — an external grant from the feed operator, not a code gap.
+
+No profit is claimed anywhere. The bot's signal is an openly labelled naïve example.
+
+---
 
 ## Safety
 
-Order-placing code is demo-only; never commit `.env`, `secrets/`, or `data/`.
+Order-placing code targets the Kalshi **demo** environment only (the base host is
+asserted at construction). Never commit `.env`, `secrets/`, or `data/` — all are
+gitignored.
+
+## License
+
+[Apache-2.0](LICENSE).
