@@ -24,13 +24,17 @@ def latency_stats(deltas_ns: list[int]) -> dict:
         value = ms[lo] + frac * (ms[hi] - ms[lo])
         return round(value, 3)
 
+    wins = sum(1 for d in deltas_ns if d < 0)
+
     return {
         "n": n,
         "mean_ms": round(sum(ms) / n, 3),
         "p10_ms": pct(10),
         "p50_ms": pct(50),
         "p90_ms": pct(90),
+        "p95_ms": pct(95),
         "p99_ms": pct(99),
         "min_ms": round(ms[0], 3),
         "max_ms": round(ms[-1], 3),
+        "win_rate": round(100 * wins / n, 1),
     }

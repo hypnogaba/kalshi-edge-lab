@@ -253,26 +253,34 @@ _PAGE_HTML = """<!doctype html>
   #race-line{margin:14px 2px 0; font-family:"IBM Plex Mono"; font-size:12.5px; color:var(--muted)}
 
   .edge-panel{margin:26px 0 34px}
+  .edge-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px}
   .edge-panel h2{font-family:"Archivo",system-ui,sans-serif; font-weight:800;
-    letter-spacing:-.01em; font-size:21px; margin:0 0 8px}
+    letter-spacing:-.01em; font-size:21px; margin:0}
   .edge-explainer{font-family:"IBM Plex Mono"; font-size:12.5px; color:var(--muted);
-    margin:0 0 18px; max-width:620px}
-  .edge-cols{display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:22px}
-  @media (max-width:640px){ .edge-cols{grid-template-columns:1fr} }
-  .edge-card{background:var(--panel); border:1px solid var(--line); border-radius:14px;
-    box-shadow:var(--shadow); overflow:hidden}
-  .edge-card .hd{padding:14px 18px}
-  .edge-card h3{margin:0 0 4px; font-size:14px; font-weight:600}
-  .edge-card .sub{margin:0; font-family:"IBM Plex Mono"; font-size:11px; color:var(--faint);
-    text-transform:uppercase; letter-spacing:.05em}
-  .edge-card.ahead{border-color:var(--fg); border-width:2px}
-  .edge-card.ahead .hd{background:var(--fg); color:var(--ink)}
-  .edge-card.ahead .hd .sub{color:var(--ink); opacity:.72}
-  .edge-headline{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:8px}
-  .edge-big{font-family:"Archivo",system-ui,sans-serif; font-weight:800;
-    font-size:clamp(22px,4.2vw,34px); letter-spacing:-.01em}
-  .edge-subnote{margin:0 0 4px; font-family:"IBM Plex Mono"; font-size:12px; color:var(--faint)}
-  .edge-statrow{margin:0; font-family:"IBM Plex Mono"; font-size:12.5px; color:var(--muted)}
+    margin:0 0 20px; max-width:620px}
+  .scoreboard{display:grid; grid-template-columns:auto 1fr; gap:28px; align-items:center;
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    box-shadow:var(--shadow); padding:22px 24px}
+  @media (max-width:640px){ .scoreboard{grid-template-columns:1fr; justify-items:center; text-align:center} }
+  .gauge-wrap{display:flex; flex-direction:column; align-items:center; gap:10px}
+  .gauge{--pct:0; width:128px; height:128px; border-radius:50%;
+    background:conic-gradient(var(--fg) calc(var(--pct)*1%), var(--line) 0);
+    display:flex; align-items:center; justify-content:center}
+  .gauge-hole{width:98px; height:98px; border-radius:50%; background:var(--panel);
+    display:flex; flex-direction:column; align-items:center; justify-content:center}
+  .gauge-num{font-family:"Archivo",system-ui,sans-serif; font-weight:800; font-size:26px; letter-spacing:-.01em}
+  .gauge-unit{font-family:"IBM Plex Mono"; font-size:9.5px; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--faint); margin-top:2px}
+  .gauge-label{margin:0; font-family:"IBM Plex Mono"; font-size:11px; color:var(--faint);
+    max-width:150px; text-align:center}
+  .compare-title{margin:0 0 10px; font-size:14px; font-weight:600}
+  .compare-row{display:flex; align-items:baseline; gap:10px; padding:6px 0; border-bottom:1px solid var(--line)}
+  .compare-row:last-of-type{border-bottom:0}
+  .compare-k{font-family:"IBM Plex Mono"; font-size:11px; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--faint); width:32px}
+  .compare-v{font-size:15px; font-weight:600}
+  .edge-subnote{margin:10px 0 0; font-family:"IBM Plex Mono"; font-size:12px; color:var(--faint)}
+  .edge-statrow{margin:6px 0 0; font-family:"IBM Plex Mono"; font-size:12px; color:var(--muted)}
   footer{border-top:1px solid var(--line); margin-top:28px; padding:22px 0 40px;
     color:var(--muted); font-family:"IBM Plex Mono"; font-size:12.5px}
   :focus-visible{outline:2px solid var(--fg); outline-offset:2px; border-radius:6px}
@@ -289,22 +297,29 @@ _PAGE_HTML = """<!doctype html>
 
 <main class="wrap">
   <section class="edge-panel" aria-labelledby="edge-title">
-    <h2 id="edge-title">The edge — who sees the market first?</h2>
-    <p class="edge-explainer">The same Kalshi trade takes two paths to this one host. We stamp both arrivals with one clock and measure the gap.</p>
-    <div class="edge-cols">
-      <div class="edge-card" id="edge-public">
-        <div class="hd"><h3>Public Kalshi WS</h3><p class="sub">direct internet path &middot; baseline</p></div>
-      </div>
-      <div class="edge-card" id="edge-dz">
-        <div class="hd"><h3>DoubleZero edge</h3><p class="sub">private edge multicast</p></div>
-      </div>
-    </div>
-    <div class="edge-headline">
-      <div class="edge-big mono" id="edge-big">DoubleZero ahead: &mdash; ms</div>
+    <div class="edge-head">
+      <h2 id="edge-title">Edge scoreboard</h2>
       <span class="pill pending" id="edge-pill">awaiting feed access</span>
     </div>
-    <p class="edge-subnote" id="edge-subnote">Real numbers appear the moment the DoubleZero feed is connected.</p>
-    <p class="edge-statrow mono" id="edge-statrow" style="display:none"></p>
+    <p class="edge-explainer">Benchmarks how much sooner the DoubleZero edge feed delivers the same Kalshi trades than the public WebSocket &mdash; per-trade, on one host, one clock.</p>
+    <div class="scoreboard">
+      <div class="gauge-wrap">
+        <div class="gauge" id="edge-gauge">
+          <div class="gauge-hole">
+            <div class="gauge-num mono" id="edge-winrate">&mdash;</div>
+            <div class="gauge-unit">win rate</div>
+          </div>
+        </div>
+        <p class="gauge-label">of trades seen first via DoubleZero</p>
+      </div>
+      <div class="compare">
+        <h3 class="compare-title">DoubleZero vs public Kalshi WS</h3>
+        <div class="compare-row"><span class="compare-k">p50</span><span class="compare-v mono" id="edge-p50">&mdash; ms</span></div>
+        <div class="compare-row"><span class="compare-k">p95</span><span class="compare-v mono" id="edge-p95">&mdash; ms</span></div>
+        <p class="edge-statrow mono" id="edge-statrow">matched &mdash; trades &middot; &mdash;</p>
+        <p class="edge-subnote" id="edge-subnote">Real numbers appear the moment the DoubleZero feed is connected.</p>
+      </div>
+    </div>
   </section>
 
   <p class="spotline">BTC spot <b id="spot">—</b></p>
@@ -397,45 +412,48 @@ _PAGE_HTML = """<!doctype html>
     return (v == null || isNaN(v)) ? '—' : Number(v).toFixed(1);
   }
 
+  function fmtSooner(v){
+    // delta = t_dz - t_public; negative = DoubleZero arrived first (sooner).
+    if(v == null || isNaN(v)) return '— ms';
+    var mag = fmtMs1(Math.abs(v));
+    return v < 0 ? mag + ' ms sooner' : mag + ' ms slower';
+  }
+
   function renderEdge(state){
-    var dzCard = document.getElementById('edge-dz');
-    var big = document.getElementById('edge-big');
     var pill = document.getElementById('edge-pill');
-    var subnote = document.getElementById('edge-subnote');
+    var gauge = document.getElementById('edge-gauge');
+    var winrateEl = document.getElementById('edge-winrate');
+    var p50El = document.getElementById('edge-p50');
+    var p95El = document.getElementById('edge-p95');
     var statrow = document.getElementById('edge-statrow');
+    var subnote = document.getElementById('edge-subnote');
+
     var race = state && state.race;
     var live = state && state.dz_feed === 'live';
     var stats = (race && race.stats) || null;
+    var winRate = (stats && typeof stats.win_rate === 'number') ? stats.win_rate : null;
     var p50 = (stats && typeof stats.p50_ms === 'number') ? stats.p50_ms : null;
+    var p95 = (stats && typeof stats.p95_ms === 'number') ? stats.p95_ms : null;
 
-    if(!race || !live || !stats || p50 == null){
-      big.textContent = 'DoubleZero ahead: — ms';
-      pill.style.display = '';
-      subnote.textContent = 'Real numbers appear the moment the DoubleZero feed is connected.';
-      statrow.style.display = 'none';
-      dzCard.classList.remove('ahead');
-      return;
-    }
+    var ready = !!(race && live && stats && winRate != null);
 
-    pill.style.display = 'none';
-    if(p50 < 0){
-      big.textContent = 'DoubleZero ahead: +' + fmtMs1(Math.abs(p50)) + ' ms (median)';
-      dzCard.classList.add('ahead');
+    pill.textContent = live ? 'Live' : 'awaiting feed access';
+    pill.className = 'pill ' + (live ? 'live' : 'pending');
+
+    gauge.style.setProperty('--pct', ready ? String(Math.max(0, Math.min(100, winRate))) : '0');
+    winrateEl.textContent = ready ? fmtMs1(winRate) + '%' : '—';
+
+    p50El.textContent = ready ? fmtSooner(p50) : '— ms';
+    p95El.textContent = ready ? fmtSooner(p95) : '— ms';
+
+    if(ready){
+      var matched = (race.matched != null) ? race.matched : '—';
+      var matchRate = (typeof race.match_rate === 'number') ? (race.match_rate * 100).toFixed(1) + '%' : '—';
+      statrow.textContent = 'matched ' + matched + ' trades · ' + matchRate;
+      subnote.style.display = 'none';
     } else {
-      big.textContent = 'Public first by ' + fmtMs1(p50) + ' ms (median)';
-      dzCard.classList.remove('ahead');
-    }
-
-    var matched = (race.matched != null) ? race.matched : '—';
-    var matchRate = (typeof race.match_rate === 'number') ? (race.match_rate * 100).toFixed(1) + '%' : '—';
-    subnote.textContent = 'matched ' + matched + ' trades · match rate ' + matchRate;
-
-    if(typeof stats.p10_ms === 'number' && typeof stats.p90_ms === 'number' && typeof stats.p99_ms === 'number'){
-      statrow.style.display = '';
-      statrow.textContent = 'p10 ' + fmtMs1(stats.p10_ms) + ' · p50 ' + fmtMs1(p50) + ' · p90 ' +
-        fmtMs1(stats.p90_ms) + ' · p99 ' + fmtMs1(stats.p99_ms) + ' ms  (negative = DoubleZero first)';
-    } else {
-      statrow.style.display = 'none';
+      statrow.textContent = 'matched — trades · —';
+      subnote.style.display = '';
     }
   }
 
