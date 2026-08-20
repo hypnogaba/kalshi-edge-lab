@@ -2,7 +2,7 @@ from common.event import Event, Kind, Side, Source
 from race.match import match_trades
 
 
-def _trade(t_ns, market="BTC", price=100.0, size=1.0, seq=None, source=Source.HL_WS):
+def _trade(t_ns, market="BTC", price=100.0, size=1.0, seq=None, source=Source.KALSHI_WS):
     return (t_ns, Event(
         source=source, t_arrival_ns=t_ns, market=market, kind=Kind.TRADE,
         price=price, size=size, side=Side.BUY, seq=seq,
@@ -85,7 +85,7 @@ def test_nearest_in_time_fallback_picks_closest_candidate():
 
 def test_non_trade_events_are_ignored():
     quote_a = (1_000_000, Event(
-        source=Source.HL_WS, t_arrival_ns=1_000_000, market="BTC", kind=Kind.QUOTE,
+        source=Source.KALSHI_WS, t_arrival_ns=1_000_000, market="BTC", kind=Kind.QUOTE,
         price=100.0, size=1.0, side=Side.BID, seq=None,
     ))
     a = [quote_a]

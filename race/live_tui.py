@@ -1,11 +1,11 @@
 """Rich split-screen TUI for the latency race.
 
 `render(state)` is a pure function: dict -> rich renderable. Left column is
-the public Hyperliquid WS top-of-book, right column is the DZ edge feed
-top-of-book, and a big panel below shows the running latency delta (last
-matched delta_ms + rolling p50). `main()` replays a JSONL file of state
-snapshots for a demo, or shows a placeholder state with no file given —
-it works standalone with no live feeds running.
+the public Kalshi WS top-of-book, right column is the DZ edge feed (Kalshi
+via DoubleZero) top-of-book, and a big panel below shows the running latency
+delta (last matched delta_ms + rolling p50). `main()` replays a JSONL file
+of state snapshots for a demo, or shows a placeholder state with no file
+given — it works standalone with no live feeds running.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ _HEADER_STYLE = "bold cyan"
 _BID_STYLE = "bold green"
 _ASK_STYLE = "bold red"
 _DELTA_POS_STYLE = "bold red"  # positive = B (dz feed) arrived later -> public was first
-_DELTA_NEG_STYLE = "bold green"  # negative = dz feed arrived first
+_DELTA_NEG_STYLE = "bold green"  # negative = dz feed arrived first (DoubleZero faster)
 
 
 def _book_panel(title: str, book: dict[str, Any]) -> Panel:
@@ -60,16 +60,16 @@ def _delta_panel(last_delta_ms: float | None, p50_delta_ms: float | None) -> Pan
             f"[{style}]{last_delta_ms:+.3f} ms[/]   (rolling p50: {p50_str})",
             vertical="middle",
         )
-    return Panel(body, title="latency delta (dz_feed - hl_ws)", style=_DARK_STYLE)
+    return Panel(body, title="latency delta (dz_feed - kalshi_ws)", style=_DARK_STYLE)
 
 
 def render(state: dict[str, Any]) -> Group:
     """Build a dark, screenshot-friendly split-screen view from a state dict.
 
-    Expected keys: hl_ws (dict with market/bid/bid_size/ask/ask_size),
+    Expected keys: kalshi_ws (dict with market/bid/bid_size/ask/ask_size),
     dz_feed (same shape), last_delta_ms (float|None), p50_delta_ms (float|None).
     """
-    hl_ws: dict[str, Any] = state.get("hl_ws", {})
+    kalshi_ws: dict[str, Any] = state.get("kalshi_ws", {})
     dz_feed: dict[str, Any] = state.get("dz_feed", {})
     last_delta_ms = state.get("last_delta_ms")
     p50_delta_ms = state.get("p50_delta_ms")
@@ -78,7 +78,7 @@ def render(state: dict[str, Any]) -> Group:
     columns.add_column(ratio=1)
     columns.add_column(ratio=1)
     columns.add_row(
-        _book_panel(f"public HL WS ({hl_ws.get('market', '—')})", hl_ws),
+        _book_panel(f"public Kalshi WS ({kalshi_ws.get('market', '—')})", kalshi_ws),
         _book_panel(f"DZ edge feed ({dz_feed.get('market', '—')})", dz_feed),
     )
 
@@ -103,7 +103,7 @@ def _read_snapshots(path: str) -> list[dict[str, Any]]:
 
 def _placeholder_state() -> dict[str, Any]:
     return {
-        "hl_ws": {"market": "BTC"},
+        "kalshi_ws": {"market": "BTC"},
         "dz_feed": {"market": "BTC"},
         "last_delta_ms": None,
         "p50_delta_ms": None,
