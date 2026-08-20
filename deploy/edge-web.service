@@ -1,0 +1,55 @@
+# ────────────────────────────────────────────────────────────────────────
+# kalshi-edge-lab live web dashboard — systemd unit template.
+#
+# This is a TEMPLATE: replace every <PLACEHOLDER> before installing.
+#   <USER>       — the Linux user that owns the repo (e.g. ubuntu)
+#   <REPO_PATH>  — absolute path to the repo on this server
+#                  (e.g. /home/ubuntu/kalshi-edge-lab)
+#
+# Install:
+#   sed -e "s|<USER>|$(whoami)|g" -e "s|<REPO_PATH>|$(pwd)|g" \
+#       deploy/edge-web.service | sudo tee /etc/systemd/system/edge-web.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now edge-web
+#
+# Manage:
+#   sudo systemctl status edge-web
+#   journalctl -u edge-web -f
+#   sudo systemctl stop edge-web
+#
+# Config knobs (set in .env or the environment): EDGE_WEB_PORT (default 8080),
+# EDGE_WEB_HOST (default 0.0.0.0), EDGE_WEB_INTERVAL (default 3s),
+# EDGE_WEB_NEAR (default 8 near-money markets).
+#
+# Reverse proxy (Caddy, one-liner, TLS handled automatically):
+#   edge.example.com {
+#       reverse_proxy 127.0.0.1:8080
+#   }
+# Save as /etc/caddy/Caddyfile (or a snippet included from it), then:
+#   sudo systemctl reload caddy
+# ────────────────────────────────────────────────────────────────────────
+
+[Unit]
+Description=kalshi-edge-lab live web dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<USER>
+WorkingDirectory=<REPO_PATH>
+EnvironmentFile=-<REPO_PATH>/.env
+ExecStart=<REPO_PATH>/.venv/bin/python -m web.server
+Restart=on-failure
+RestartSec=5
+
+# Sandboxing: the process only ever needs to read data/race/race_stats.json
+# (if present); everything else on disk should be locked down.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths=<REPO_PATH>/data
+
+[Install]
+WantedBy=multi-user.target

@@ -90,7 +90,39 @@ touch data/KILL
 
 See `deploy/kalshi-edge-bot.service` for the full unit file and comments.
 
-## 5. Validate with no feed/keys at all
+## 5. Live web dashboard
+
+A small FastAPI service that reuses the same Kalshi/Binance/bot-signal modules as
+`bot/run.py` and streams the live state to a browser over Server-Sent Events. Read-only
+— it never places orders.
+
+```bash
+uv run python -m web.server     # http://localhost:8080 by default
+```
+
+Env knobs (all optional):
+
+- `EDGE_WEB_PORT` — listen port (default `8080`)
+- `EDGE_WEB_HOST` — listen host (default `0.0.0.0`)
+- `EDGE_WEB_INTERVAL` — refresh interval in seconds (default `3`)
+- `EDGE_WEB_NEAR` — number of near-money markets to watch (default `8`)
+
+Endpoints: `/` (the page), `/events` (SSE stream), `/api/state` (plain JSON snapshot).
+If `data/race/race_stats.json` exists (written by `scripts/run_race.py`), its stats are
+shown on the page and the "DZ feed" pill flips from `pending` to `live`.
+
+To run it continuously as a service, see `deploy/edge-web.service` (systemd unit
+template, same install pattern as `deploy/kalshi-edge-bot.service` above).
+
+Reverse proxy (Caddy, one-liner, TLS handled automatically):
+
+```
+edge.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+## 6. Validate with no feed/keys at all
 
 If you just want to confirm the code itself is wired correctly (matching,
 stats, chart rendering) without any DZ feed or Kalshi credentials:
