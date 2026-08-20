@@ -1,0 +1,39 @@
+# ────────────────────────────────────────────────────────────────────────
+# kalshi-edge-lab demo bot — systemd unit template.
+#
+# This is a TEMPLATE: replace every <PLACEHOLDER> before installing.
+#   <USER>       — the Linux user that owns the repo (e.g. ubuntu)
+#   <REPO_PATH>  — absolute path to the repo on this server
+#                  (e.g. /home/ubuntu/kalshi-edge-lab)
+#
+# Install:
+#   sed -e "s|<USER>|$(whoami)|g" -e "s|<REPO_PATH>|$(pwd)|g" \
+#       deploy/kalshi-edge-bot.service | sudo tee /etc/systemd/system/kalshi-edge-bot.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now kalshi-edge-bot
+#
+# Manage:
+#   sudo systemctl status kalshi-edge-bot
+#   journalctl -u kalshi-edge-bot -f
+#   sudo systemctl stop kalshi-edge-bot
+#
+# Kill switch (stop the bot from trading without stopping the service):
+#   touch <REPO_PATH>/data/KILL
+# ────────────────────────────────────────────────────────────────────────
+
+[Unit]
+Description=kalshi-edge-lab demo trading bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<USER>
+WorkingDirectory=<REPO_PATH>
+EnvironmentFile=<REPO_PATH>/.env
+ExecStart=<REPO_PATH>/.venv/bin/python -m bot.run --kill-switch <REPO_PATH>/data/KILL --decision-log <REPO_PATH>/data/decisions.jsonl
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
