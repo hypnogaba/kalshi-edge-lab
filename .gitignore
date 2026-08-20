@@ -8,3 +8,7 @@ claude.txt
 __pycache__/
 *.pyc
 .venv/
+
+# tool caches
+.wrangler/
+.vercel/

@@ -7,6 +7,12 @@ binary decoder for the feed — real numbers, reproducible from source, open cod
 ![CI](https://github.com/hypnogaba/kalshi-edge-lab/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.12-blue.svg)
+![status: experiment](https://img.shields.io/badge/status-experiment-lightgrey.svg)
+
+> **⚗️ Experiment, not a product.** This is an exploratory personal experiment to
+> measure and visualize how much sooner a private edge feed delivers market data
+> than the public path. Expect rough edges. No profit is claimed anywhere, and the
+> demo bot's signal is a deliberately naïve example.
 
 > **Independent project.** This is a personal, independent project. It is not
 > affiliated with, endorsed by, or an official product of DoubleZero or
@@ -108,7 +114,7 @@ bot/                     Reference demo bot: signal, guardrails, order manager, 
 dash/  web/              Terminal dashboard + live web dashboard (FastAPI/SSE)
 scripts/                 run_race, live, race_demo, discover_markets, check_auth …
 deploy/                  Server setup, run scripts, systemd units, tunnel guide
-docs/                    Methodology, runbook, feed notes, session log
+docs/                    Methodology, runbook, feed notes
 ```
 
 ---
@@ -123,18 +129,6 @@ hold up to hostile review.
 
 Run the real benchmark on a DoubleZero-connected host: see
 [`docs/runbook.md`](docs/runbook.md) and [`deploy/README.md`](deploy/README.md).
-
----
-
-## Status
-
-- ✅ Full pipeline built and tested (race, bot, decoder, adapters); CI green.
-- ✅ DoubleZero decoder verified byte-for-byte against the wire spec.
-- ✅ Kalshi feed is **live on DoubleZero** (`edge-kalshi-perps-tob`).
-- ⏳ Real edge-vs-public numbers pending a subscriber access pass for the
-  receiving host — an external grant from the feed operator, not a code gap.
-
-No profit is claimed anywhere. The bot's signal is an openly labelled naïve example.
 
 ---
 
