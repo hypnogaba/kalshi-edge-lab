@@ -15,7 +15,10 @@ import asyncio
 import dataclasses
 import logging
 import sys
+import time
 from pathlib import Path
+
+import orjson
 
 from common.config import kalshi_prod
 from common.event import Event, Kind, Side, Source
@@ -83,7 +86,7 @@ async def _run_captures(cfg, markets: list[str], args: argparse.Namespace,
     )
 
 
-def _print_race_summary(pairs, discarded_a: int, discarded_b: int, n_a: int, n_b: int) -> None:
+def _print_race_summary(pairs, discarded_a: int, discarded_b: int, n_a: int, n_b: int) -> dict:
     match_rate = (len(pairs) / n_a) if n_a else 0.0
     stats = latency_stats([p.delta_ns for p in pairs])
     print(f"public trades: {n_a}   dz trades: {n_b}")
@@ -92,6 +95,7 @@ def _print_race_summary(pairs, discarded_a: int, discarded_b: int, n_a: int, n_b
     print(f"p10={stats.get('p10_ms')}ms  p50={stats.get('p50_ms')}ms  "
           f"p90={stats.get('p90_ms')}ms  p99={stats.get('p99_ms')}ms")
     print("delta = dz_arrival - public_arrival; negative = DoubleZero faster")
+    return stats
 
 
 def _run_normal(args: argparse.Namespace) -> int:
@@ -131,13 +135,32 @@ def _run_normal(args: argparse.Namespace) -> int:
     pairs, discarded_public, discarded_dz = match_trades(
         public_trades, dz_trades, window_ns=window_ns,
     )
-    _print_race_summary(pairs, discarded_public, discarded_dz,
-                         len(public_trades), len(dz_trades))
+    stats = _print_race_summary(pairs, discarded_public, discarded_dz,
+                                 len(public_trades), len(dz_trades))
 
     out_png = out_dir / "race.png"
     render_report([p.delta_ns for p in pairs], str(out_png),
                   title="Kalshi via DoubleZero vs public")
     print(f"report: {out_png}")
+
+    match_rate = (len(pairs) / len(public_trades)) if public_trades else 0.0
+    race_stats = {
+        "stats": stats,
+        "matched": len(pairs),
+        "discarded_a": discarded_public,
+        "discarded_b": discarded_dz,
+        "match_rate": match_rate,
+        "params": {
+            "market": args.market,
+            "group": args.group,
+            "minutes": args.minutes,
+            "window_ms": args.window_ms,
+        },
+        "captured_at": time.time(),
+    }
+    out_json = out_dir / "race_stats.json"
+    out_json.write_bytes(orjson.dumps(race_stats))
+    print(f"stats: {out_json}")
     return 0
 
 
