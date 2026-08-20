@@ -49,8 +49,15 @@ bot/          Reference demo bot: signal, guardrails, order manager, decision lo
 dash/         Dashboard TUI / HTML portal for race and bot output
 scripts/      CLI entry points (run_race, discover_markets, verify_capture, check_auth)
 deploy/       Server setup + run scripts for the DZ-connected host
-docs/         Runbook, env reference, feed notes
+docs/         Methodology, runbook, env reference, feed notes
 ```
+
+## How the numbers are made
+
+The benchmark method — single host, one monotonic clock, per-trade id matching,
+the exact metric, threats to validity, and how the tooling is validated offline —
+is written up in **[`docs/methodology.md`](docs/methodology.md)**. Every published
+figure is reproducible from this repo.
 
 ## Data & wire format
 
