@@ -186,6 +186,8 @@ SELFCHECK: <span class="k-up">PASS</span></pre>
         <pre>{<span class="st">"market"</span>:<span class="st">"KXBTC-…-T68499.99"</span>, <span class="st">"kalshi_yes_cents"</span>:<span class="nm">74</span>,
  <span class="st">"spot"</span>:<span class="nm">68637.65</span>, <span class="st">"signal"</span>:<span class="st">"buy_yes"</span>,
  <span class="st">"action"</span>:<span class="st">"placed"</span>, <span class="st">"result"</span>:{<span class="st">"order_id"</span>:<span class="st">"…"</span>}}</pre>
+        <p class="lbl" style="margin-top:16px">watch it live — one command, no keys</p>
+        <pre>uv run python -m scripts.live   <span class="cm"># Kalshi + Binance + the bot's signals, live in your terminal</span></pre>
         <p class="lbl" style="margin-top:16px">guardrails (hard ceilings, independent of config)</p>
         <pre>max position · max orders/min · max daily loss
 kill-switch file — checked <span class="kw">every</span> loop
