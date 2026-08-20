@@ -8,39 +8,32 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 
 <style>
+  /* monochrome — black / white / grey, both themes */
   :root{
-    --ink:#EEF1F8; --panel:#FFFFFF; --panel-2:#F3F6FC; --code:#F5F7FB; --line:rgba(14,21,40,.11);
-    --fg:#0E1524; --muted:#54617A; --faint:#828EA6;
-    --accent:#2E5BE6; --amber:#B9740B;
-    --up:#12915B; --down:#CE3552; --hold:#6B7690;
-    --glow:rgba(46,91,230,.13);
-    --shadow:0 1px 0 rgba(14,21,40,.03), 0 10px 30px -20px rgba(14,21,40,.35);
+    --ink:#FFFFFF; --panel:#FFFFFF; --panel-2:#F2F3F5; --code:#F5F6F8; --line:rgba(0,0,0,.13);
+    --fg:#0A0A0B; --muted:#585A61; --faint:#8A8D95;
+    --accent:#0A0A0B;
+    --shadow:0 1px 0 rgba(0,0,0,.03), 0 10px 30px -22px rgba(0,0,0,.4);
   }
   @media (prefers-color-scheme:dark){
     :root:not([data-theme="light"]){
-      --ink:#080B14; --panel:#101725; --panel-2:#0C1220; --code:#0B111D; --line:rgba(255,255,255,.09);
-      --fg:#E8ECF6; --muted:#8B95AD; --faint:#5C6782;
-      --accent:#5B85FF; --amber:#F2A93B;
-      --up:#46C48A; --down:#F26D85; --hold:#7E89A2;
-      --glow:rgba(91,133,255,.16);
-      --shadow:0 1px 0 rgba(0,0,0,.4), 0 18px 44px -24px rgba(0,0,0,.85);
+      --ink:#09090A; --panel:#141416; --panel-2:#1B1C1F; --code:#111113; --line:rgba(255,255,255,.14);
+      --fg:#ECEDEF; --muted:#A0A2A9; --faint:#6C6E76;
+      --accent:#FAFAFA;
+      --shadow:0 1px 0 rgba(0,0,0,.5), 0 18px 44px -26px rgba(0,0,0,.9);
     }
   }
   :root[data-theme="dark"]{
-    --ink:#080B14; --panel:#101725; --panel-2:#0C1220; --code:#0B111D; --line:rgba(255,255,255,.09);
-    --fg:#E8ECF6; --muted:#8B95AD; --faint:#5C6782;
-    --accent:#5B85FF; --amber:#F2A93B;
-    --up:#46C48A; --down:#F26D85; --hold:#7E89A2;
-    --glow:rgba(91,133,255,.16);
-    --shadow:0 1px 0 rgba(0,0,0,.4), 0 18px 44px -24px rgba(0,0,0,.85);
+    --ink:#09090A; --panel:#141416; --panel-2:#1B1C1F; --code:#111113; --line:rgba(255,255,255,.14);
+    --fg:#ECEDEF; --muted:#A0A2A9; --faint:#6C6E76;
+    --accent:#FAFAFA;
+    --shadow:0 1px 0 rgba(0,0,0,.5), 0 18px 44px -26px rgba(0,0,0,.9);
   }
   :root[data-theme="light"]{
-    --ink:#EEF1F8; --panel:#FFFFFF; --panel-2:#F3F6FC; --code:#F5F7FB; --line:rgba(14,21,40,.11);
-    --fg:#0E1524; --muted:#54617A; --faint:#828EA6;
-    --accent:#2E5BE6; --amber:#B9740B;
-    --up:#12915B; --down:#CE3552; --hold:#6B7690;
-    --glow:rgba(46,91,230,.13);
-    --shadow:0 1px 0 rgba(14,21,40,.03), 0 10px 30px -20px rgba(14,21,40,.35);
+    --ink:#FFFFFF; --panel:#FFFFFF; --panel-2:#F2F3F5; --code:#F5F6F8; --line:rgba(0,0,0,.13);
+    --fg:#0A0A0B; --muted:#585A61; --faint:#8A8D95;
+    --accent:#0A0A0B;
+    --shadow:0 1px 0 rgba(0,0,0,.03), 0 10px 30px -22px rgba(0,0,0,.4);
   }
 
   *{box-sizing:border-box}
@@ -49,27 +42,29 @@
     font-family:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
     font-size:16px; line-height:1.62; -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility}
   .wrap{max-width:1000px; margin:0 auto; padding:0 24px}
-  a{color:var(--accent); text-decoration:none} a:hover{text-decoration:underline}
+  a{color:var(--fg); text-decoration:underline; text-underline-offset:2px; text-decoration-color:var(--faint)}
+  a:hover{text-decoration-color:var(--fg)}
   h1,h2,h3{font-family:"Archivo",system-ui,sans-serif; text-wrap:balance; margin:0}
   .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace; font-variant-numeric:tabular-nums}
-  .eyebrow{font-family:"IBM Plex Mono",monospace; font-size:11.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--accent)}
+  .eyebrow{font-family:"IBM Plex Mono",monospace; font-size:11.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--muted)}
   .muted{color:var(--muted)}
 
   header.bar{position:sticky; top:0; z-index:20; backdrop-filter:blur(10px);
-    background:color-mix(in srgb, var(--ink) 84%, transparent); border-bottom:1px solid var(--line)}
+    background:color-mix(in srgb, var(--ink) 85%, transparent); border-bottom:1px solid var(--line)}
   .bar-in{display:flex; align-items:center; gap:14px; height:58px}
-  .brand{display:flex; align-items:center; gap:10px; font-family:"Archivo"; font-weight:800}
-  .brand .z{display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:6px; background:var(--accent); color:#fff; font-size:13px; font-weight:800; box-shadow:0 0 0 4px var(--glow)}
+  .brand{display:flex; align-items:center; gap:10px; font-family:"Archivo"; font-weight:800; text-decoration:none}
+  .brand .z{display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:6px; background:var(--fg); color:var(--ink); font-size:13px; font-weight:800}
   .brand small{font-family:"IBM Plex Mono"; font-weight:500; font-size:11px; letter-spacing:.14em; color:var(--muted); text-transform:uppercase}
   .spacer{flex:1}
-  .navlink{font-family:"IBM Plex Mono"; font-size:12.5px; color:var(--muted)}
-  .navlink:hover{color:var(--fg); text-decoration:none}
+  .navlink{font-family:"IBM Plex Mono"; font-size:12.5px; color:var(--muted); text-decoration:none}
+  .navlink:hover{color:var(--fg)}
+  .gh{font-family:"IBM Plex Mono"; font-size:12.5px; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:6px 11px; text-decoration:none}
+  .gh:hover{border-color:var(--fg)}
   .toggle{font-family:"IBM Plex Mono"; font-size:12px; color:var(--fg); background:var(--panel-2); border:1px solid var(--line); border-radius:999px; padding:6px 12px; cursor:pointer}
-  .toggle:hover{border-color:var(--accent)}
+  .toggle:hover{border-color:var(--fg)}
 
-  .hero{padding:60px 0 30px}
+  .hero{padding:58px 0 30px}
   .hero h1{font-size:clamp(34px,6vw,60px); font-weight:800; line-height:1.0; letter-spacing:-.02em; margin:16px 0 0}
-  .hero h1 .em{color:var(--accent)}
   .lede{max-width:66ch; margin:18px 0 0; font-size:clamp(15.5px,2vw,18px); color:var(--muted)}
   .facts{display:flex; flex-wrap:wrap; gap:8px; margin-top:22px; font-family:"IBM Plex Mono"; font-size:12px}
   .facts .f{border:1px solid var(--line); background:var(--panel); border-radius:999px; padding:6px 12px; color:var(--muted)}
@@ -87,7 +82,7 @@
   pre{margin:0; overflow-x:auto; background:var(--code); border:1px solid var(--line); border-radius:12px; padding:14px 16px}
   pre, code{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; font-size:12.7px; line-height:1.65}
   code.in{background:var(--panel-2); border:1px solid var(--line); border-radius:5px; padding:.5px 5px; font-size:.9em}
-  .cm{color:var(--faint)} .kw{color:var(--accent)} .st{color:var(--up)} .nm{color:var(--amber)}
+  .cm{color:var(--faint)} .kw{color:var(--fg); font-weight:600} .st{color:var(--muted)} .nm{color:var(--fg); font-weight:600}
   .lbl{font-family:"IBM Plex Mono"; font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--faint); margin:0 0 7px}
 
   .facts-tbl{width:100%; border-collapse:collapse; font-family:"IBM Plex Mono"; font-size:13px}
@@ -95,8 +90,7 @@
   .facts-tbl tr:last-child td{border-bottom:0}
   .facts-tbl td:first-child{color:var(--muted); padding-right:16px; white-space:nowrap}
   .facts-tbl td:last-child{text-align:right; font-variant-numeric:tabular-nums}
-  .k-amber{color:var(--amber); font-weight:600}
-  .k-up{color:var(--up); font-weight:600}
+  .k-em{color:var(--fg); font-weight:600}
 
   .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); padding:16px 18px}
   .tbl{width:100%; border-collapse:collapse; font-family:"IBM Plex Mono"; font-size:13px}
@@ -104,23 +98,24 @@
   .tbl th{font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); font-weight:500}
   .tbl td.num{text-align:right; font-variant-numeric:tabular-nums}
   .tbl tr:last-child td{border-bottom:0}
-  .chip{font-family:"IBM Plex Mono"; font-size:10.5px; letter-spacing:.04em; text-transform:uppercase; padding:2px 7px; border-radius:5px; border:1px solid transparent}
-  .chip.yes{color:var(--up); background:color-mix(in srgb,var(--up) 13%, transparent); border-color:color-mix(in srgb,var(--up) 28%, transparent)}
-  .chip.no{color:var(--down); background:color-mix(in srgb,var(--down) 13%, transparent); border-color:color-mix(in srgb,var(--down) 28%, transparent)}
-  .chip.hold{color:var(--hold); background:color-mix(in srgb,var(--hold) 12%, transparent); border-color:color-mix(in srgb,var(--hold) 24%, transparent)}
+  .chip{font-family:"IBM Plex Mono"; font-size:10.5px; letter-spacing:.04em; text-transform:uppercase; padding:2px 7px; border-radius:5px; border:1px solid var(--fg); white-space:nowrap}
+  .chip.yes{background:var(--fg); color:var(--ink)}
+  .chip.no{background:transparent; color:var(--fg)}
+  .chip.hold{background:transparent; color:var(--faint); border-color:var(--line); border-style:dashed}
 
   footer{border-top:1px solid var(--line); padding:30px 0 60px; color:var(--muted); font-family:"IBM Plex Mono"; font-size:12.5px}
   footer .row{display:flex; gap:18px; flex-wrap:wrap; align-items:center}
-  :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:6px}
+  :focus-visible{outline:2px solid var(--fg); outline-offset:2px; border-radius:6px}
 </style>
 
 <header class="bar">
   <div class="wrap bar-in">
-    <div class="brand"><span class="z" aria-hidden="true">0</span> DoubleZero Edge Lab <small>Kalshi feed</small></div>
+    <a class="brand" href="https://github.com/hypnogaba/kalshi-edge-lab"><span class="z" aria-hidden="true">0</span> DoubleZero Edge Lab <small>Kalshi feed</small></a>
     <span class="spacer"></span>
     <a class="navlink" href="#race">race</a>
     <a class="navlink" href="#bot">bot</a>
     <a class="navlink" href="#decoder">decoder</a>
+    <a class="gh" href="https://github.com/hypnogaba/kalshi-edge-lab">GitHub ↗</a>
     <button class="toggle" id="tg" type="button">Theme</button>
   </div>
 </header>
@@ -128,14 +123,14 @@
 <main class="wrap">
   <section class="hero" style="border-top:0">
     <div class="eyebrow">Kalshi market data over DoubleZero</div>
-    <h1>Measure the edge.<br><span class="em">Then consume it.</span></h1>
+    <h1>Measure the edge.<br>Then consume it.</h1>
     <p class="lede">Tooling to benchmark and consume the DoubleZero Kalshi edge feed on your own host: a single-clock latency benchmark vs. the public Kalshi WebSocket, a forkable demo bot, and an open binary decoder that normalizes the feed to one event type. Same-host timing, trade-id matching, reproducible from source.</p>
     <div class="facts">
       <span class="f"><b>Python 3.12</b> · uv · pytest</span>
       <span class="f">wire <b>Top-of-Book &amp; Trades v3</b></span>
       <span class="f">GRE multicast on <b>doublezero1</b></span>
-      <span class="f"><b>58</b> tests green</span>
-      <span class="f">Apache-2.0 refs</span>
+      <span class="f"><b>66</b> tests green</span>
+      <span class="f"><a href="https://github.com/hypnogaba/kalshi-edge-lab" style="text-decoration:none">open source ↗</a></span>
     </div>
   </section>
 
@@ -155,11 +150,15 @@ uv run python -m scripts.run_race \
 <span class="cm"># output</span>
 matched <span class="nm">N</span> trades  (match rate …%)
 p10 / p50 / p90 / p99   ms   <span class="cm"># negative = DoubleZero first</span></pre>
+        <p class="lbl" style="margin-top:16px">see the format now, on real Kalshi trades</p>
+        <pre>$ uv run python -m scripts.race_demo --minutes 1
+<span class="cm"># 319 real trades · 100% matched · ASCII histogram + PNG</span>
+<span class="cm"># (the DZ side is a labeled SIMULATED shift — format demo, not a measurement)</span></pre>
         <p class="lbl" style="margin-top:16px">validate the tool offline (no feed, no keys)</p>
         <pre>$ uv run python -m scripts.run_race --selfcheck
-matched <span class="nm">50/50</span>  (<span class="k-up">100.0%</span>)
+matched <span class="nm">50/50</span>  (<span class="k-em">100.0%</span>)
 p50 delta recovered  <span class="nm">+3.000 ms</span>   <span class="cm"># injected +3ms, recovered exactly</span>
-SELFCHECK: <span class="k-up">PASS</span></pre>
+SELFCHECK: <span class="k-em">PASS</span></pre>
       </div>
       <div class="card">
         <p class="lbl">method</p>
@@ -168,10 +167,10 @@ SELFCHECK: <span class="k-up">PASS</span></pre>
           <tr><td>Scope</td><td>single host</td></tr>
           <tr><td>Match key</td><td>trade id (exact)</td></tr>
           <tr><td>Fallback</td><td>px·sz·time window</td></tr>
-          <tr><td>Delta</td><td class="k-amber">t_dz − t_public</td></tr>
-          <tr><td>Self-check</td><td class="k-up">100% · +3.000 ms</td></tr>
+          <tr><td>Delta</td><td class="k-em">t_dz − t_public</td></tr>
+          <tr><td>Self-check</td><td class="k-em">100% · +3.000 ms</td></tr>
         </table>
-        <p class="muted" style="font-size:12.5px; margin:14px 0 0; font-family:'IBM Plex Mono'">Point it at your DoubleZero host to produce edge-vs-public numbers. Every figure is reproducible from this repo.</p>
+        <p class="muted" style="font-size:12.5px; margin:14px 0 0; font-family:'IBM Plex Mono'">Point it at your DoubleZero host to produce edge-vs-public numbers. Method: <a href="https://github.com/hypnogaba/kalshi-edge-lab/blob/main/docs/methodology.md">docs/methodology.md</a>.</p>
       </div>
     </div>
   </section>
@@ -182,12 +181,12 @@ SELFCHECK: <span class="k-up">PASS</span></pre>
     <p class="rsub">A minimal, forkable bot on Kalshi's demo environment: real trades + reference price → signal → hard guardrails → order → append-only decision log. Replace one file (<code class="in">bot/signal.py</code>) with your strategy; the rest is plumbing.</p>
     <div class="grid2">
       <div>
-        <p class="lbl">decision log — one JSON line per tick (real capture)</p>
+        <p class="lbl">watch it live — one command, no keys</p>
+        <pre>uv run python -m scripts.live   <span class="cm"># Kalshi + Binance + the bot's signals, live in your terminal</span></pre>
+        <p class="lbl" style="margin-top:16px">decision log — one JSON line per tick (real capture)</p>
         <pre>{<span class="st">"market"</span>:<span class="st">"KXBTC-…-T68499.99"</span>, <span class="st">"kalshi_yes_cents"</span>:<span class="nm">74</span>,
  <span class="st">"spot"</span>:<span class="nm">68637.65</span>, <span class="st">"signal"</span>:<span class="st">"buy_yes"</span>,
  <span class="st">"action"</span>:<span class="st">"placed"</span>, <span class="st">"result"</span>:{<span class="st">"order_id"</span>:<span class="st">"…"</span>}}</pre>
-        <p class="lbl" style="margin-top:16px">watch it live — one command, no keys</p>
-        <pre>uv run python -m scripts.live   <span class="cm"># Kalshi + Binance + the bot's signals, live in your terminal</span></pre>
         <p class="lbl" style="margin-top:16px">guardrails (hard ceilings, independent of config)</p>
         <pre>max position · max orders/min · max daily loss
 kill-switch file — checked <span class="kw">every</span> loop
@@ -198,13 +197,13 @@ demo endpoint asserted — <span class="kw">never</span> touches prod</pre>
         <table class="tbl">
           <thead><tr><th>BTC ≥ strike?</th><th class="num">yes</th><th>signal</th></tr></thead>
           <tbody>
-            <tr><td>T 68,499.99</td><td class="num">74¢</td><td><span class="chip yes">buy yes</span></td></tr>
-            <tr><td>T 68,599.99</td><td class="num">55¢</td><td><span class="chip hold">hold</span></td></tr>
-            <tr><td>T 68,699.99</td><td class="num">34¢</td><td><span class="chip no">buy no</span></td></tr>
-            <tr><td>T 68,749.99</td><td class="num">42¢</td><td><span class="chip no">buy no</span></td></tr>
+            <tr><td>T 69,499.99</td><td class="num">53¢</td><td><span class="chip yes">▲ buy yes</span></td></tr>
+            <tr><td>T 69,749.99</td><td class="num">45¢</td><td><span class="chip hold">hold</span></td></tr>
+            <tr><td>T 69,999.99</td><td class="num">39¢</td><td><span class="chip no">▼ buy no</span></td></tr>
+            <tr><td>T 70,249.99</td><td class="num">30¢</td><td><span class="chip no">▼ buy no</span></td></tr>
           </tbody>
         </table>
-        <p class="muted" style="font-size:12.5px; margin:14px 0 0; font-family:'IBM Plex Mono'">363 real trades pulled in 30s over the keyless public REST. Signal shown is a naïve example — swap it for yours.</p>
+        <p class="muted" style="font-size:12.5px; margin:14px 0 0; font-family:'IBM Plex Mono'">363 real trades pulled in 30s over the keyless public REST. Signal is a naïve example — swap it for yours.</p>
       </div>
     </div>
   </section>
@@ -236,7 +235,7 @@ dz = DzDecoder()               <span class="cm"># holds the instrument registry<
           <tr><td>InstrumentDef</td><td>130 B · exponents</td></tr>
           <tr><td>Ports</td><td>mktdata + refdata</td></tr>
         </table>
-        <p class="muted" style="font-size:12.5px; margin:14px 0 0; font-family:'IBM Plex Mono'">Multicast receiver + <code class="in">--selftest</code> included. Group &amp; ports are per-deployment (<code class="in">doublezero multicast group list</code>).</p>
+        <p class="muted" style="font-size:12.5px; margin:14px 0 0; font-family:'IBM Plex Mono'">Multicast receiver + <code class="in">--selftest</code> included. Group &amp; ports per-deployment (<code class="in">doublezero multicast group list</code>).</p>
       </div>
     </div>
   </section>
@@ -246,9 +245,9 @@ dz = DzDecoder()               <span class="cm"># holds the instrument registry<
   <div class="wrap row">
     <span>DoubleZero Edge Lab · Kalshi</span>
     <span class="muted">·</span>
-    <span>private repo — access on request</span>
+    <a href="https://github.com/hypnogaba/kalshi-edge-lab">github.com/hypnogaba/kalshi-edge-lab</a>
     <span class="spacer" style="flex:1"></span>
-    <span class="muted">public feed · dz decoder · race · bot — all in one repo</span>
+    <span class="muted">public feed · dz decoder · race · bot — one repo</span>
   </div>
 </footer>
 
