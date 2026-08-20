@@ -6,6 +6,7 @@ from sources.kalshi_ws.auth import KalshiSigner
 
 _ORDERS = "/trade-api/v2/portfolio/events/orders"
 _POSITIONS = "/trade-api/v2/portfolio/positions"
+_BALANCE = "/trade-api/v2/portfolio/balance"
 
 
 class OrderManager:
@@ -46,6 +47,11 @@ class OrderManager:
         r = self._c.get(_POSITIONS, headers=self._headers("GET", _POSITIONS))
         r.raise_for_status()
         return r.json().get("market_positions", [])
+
+    def balance(self) -> dict:
+        r = self._c.get(_BALANCE, headers=self._headers("GET", _BALANCE))
+        r.raise_for_status()
+        return r.json()
 
     def close(self) -> None:
         self._c.close()

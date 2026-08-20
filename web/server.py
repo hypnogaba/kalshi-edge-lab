@@ -34,6 +34,7 @@ from sources.kalshi_rest.selector import nearest_markets, parse_strike
 REFRESH_SECONDS = float(os.environ.get("EDGE_WEB_INTERVAL", "3"))
 NEAR = int(os.environ.get("EDGE_WEB_NEAR", "8"))
 RACE_STATS_PATH = Path("data/race/race_stats.json")
+BOT_STATE_PATH = Path("data/bot_state.json")
 _SERIES = ("KXBTC", "KXBTCD")
 
 # Module-level live state, served as-is by /api/state and /events.
@@ -44,6 +45,7 @@ STATE: dict = {
     "markets": [],
     "dz_feed": "pending",
     "race": None,
+    "bot": None,
 }
 
 _watchlist: list[str] | None = None  # built once, cached (see _ensure_watchlist)
@@ -127,6 +129,14 @@ async def refresh_once(client: KalshiRestClient, sig_cfg: SignalConfig) -> None:
     else:
         STATE["race"] = None
         STATE["dz_feed"] = "pending"
+
+    if BOT_STATE_PATH.exists():
+        try:
+            STATE["bot"] = json.loads(BOT_STATE_PATH.read_text())
+        except Exception:  # noqa: BLE001 - malformed file, treat as bot not running
+            STATE["bot"] = None
+    else:
+        STATE["bot"] = None
 
     STATE["updated_ns"] = time.monotonic_ns()
     STATE["updated_iso"] = datetime.now(UTC).isoformat()
@@ -281,6 +291,32 @@ _PAGE_HTML = """<!doctype html>
   .compare-v{font-size:15px; font-weight:600}
   .edge-subnote{margin:10px 0 0; font-family:"IBM Plex Mono"; font-size:12px; color:var(--faint)}
   .edge-statrow{margin:6px 0 0; font-family:"IBM Plex Mono"; font-size:12px; color:var(--muted)}
+
+  .bot-panel{margin:26px 0 34px}
+  .bot-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px}
+  .bot-panel h2{font-family:"Archivo",system-ui,sans-serif; font-weight:800;
+    letter-spacing:-.01em; font-size:21px; margin:0}
+  .pill.dryrun{color:var(--muted); border-style:dashed}
+  .pill.live-bot{border-color:var(--fg); color:var(--fg)}
+  .bot-empty{padding:22px 14px; color:var(--faint); font-family:"IBM Plex Mono"; font-size:13px;
+    background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow)}
+  .bot-stats{display:grid; grid-template-columns:repeat(4,1fr); gap:16px;
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    box-shadow:var(--shadow); padding:20px 22px}
+  @media (max-width:640px){ .bot-stats{grid-template-columns:1fr 1fr} }
+  .bot-stat{display:flex; flex-direction:column; gap:4px}
+  .bot-stat-k{font-family:"IBM Plex Mono"; font-size:10.5px; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--faint)}
+  .bot-stat-v{font-family:"IBM Plex Mono"; font-size:18px; font-weight:600; font-variant-numeric:tabular-nums}
+  .bot-recent{margin-top:16px; background:var(--panel); border:1px solid var(--line);
+    border-radius:14px; box-shadow:var(--shadow); padding:6px 18px}
+  .bot-recent-title{font-family:"IBM Plex Mono"; font-size:10.5px; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--faint); margin:14px 0 6px}
+  .bot-recent-row{display:flex; gap:10px; padding:7px 0; border-bottom:1px solid var(--line);
+    font-family:"IBM Plex Mono"; font-size:12.5px; color:var(--muted); flex-wrap:wrap}
+  .bot-recent-row:last-child{border-bottom:0}
+  .bot-recent-row .m{color:var(--fg)}
+  .kalshi-warn{margin:8px 2px 0; font-family:"IBM Plex Mono"; font-size:11.5px; color:var(--faint)}
   footer{border-top:1px solid var(--line); margin-top:28px; padding:22px 0 40px;
     color:var(--muted); font-family:"IBM Plex Mono"; font-size:12.5px}
   :focus-visible{outline:2px solid var(--fg); outline-offset:2px; border-radius:6px}
@@ -340,6 +376,25 @@ _PAGE_HTML = """<!doctype html>
     </table>
   </div>
   <p id="race-line" style="display:none"></p>
+
+  <section class="bot-panel" aria-labelledby="bot-title">
+    <div class="bot-head">
+      <h2 id="bot-title">Demo bot</h2>
+      <span class="pill pending" id="bot-pill">not running</span>
+    </div>
+    <p class="bot-empty" id="bot-empty">bot not running</p>
+    <div class="bot-stats" id="bot-stats" style="display:none">
+      <div class="bot-stat"><span class="bot-stat-k">Net position</span><span class="bot-stat-v mono" id="bot-netpos">&mdash;</span></div>
+      <div class="bot-stat"><span class="bot-stat-k">Balance</span><span class="bot-stat-v mono" id="bot-balance">&mdash;</span></div>
+      <div class="bot-stat"><span class="bot-stat-k">Paper PnL</span><span class="bot-stat-v mono" id="bot-pnl">&mdash;</span></div>
+      <div class="bot-stat"><span class="bot-stat-k">Open markets</span><span class="bot-stat-v mono" id="bot-openmkts">&mdash;</span></div>
+    </div>
+    <p class="kalshi-warn" id="bot-kalshi-warn" style="display:none">last Kalshi portfolio fetch failed &mdash; showing stale numbers</p>
+    <div class="bot-recent" id="bot-recent" style="display:none">
+      <p class="bot-recent-title">Recent decisions</p>
+      <div id="bot-recent-list"></div>
+    </div>
+  </section>
 </main>
 
 <footer>
@@ -405,7 +460,65 @@ _PAGE_HTML = """<!doctype html>
     }
 
     renderEdge(state);
+    renderBot(state);
     renderUpdated();
+  }
+
+  function fmtSigned(n){
+    if(n == null || isNaN(n)) return '—';
+    var v = Number(n);
+    var sign = v > 0 ? '+' : (v < 0 ? '−' : '');
+    return sign + '$' + Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
+  }
+
+  function renderBot(state){
+    var bot = state && state.bot;
+    var pill = document.getElementById('bot-pill');
+    var empty = document.getElementById('bot-empty');
+    var stats = document.getElementById('bot-stats');
+    var recentWrap = document.getElementById('bot-recent');
+    var warn = document.getElementById('bot-kalshi-warn');
+
+    if(!bot){
+      pill.textContent = 'not running';
+      pill.className = 'pill pending';
+      empty.style.display = '';
+      stats.style.display = 'none';
+      recentWrap.style.display = 'none';
+      warn.style.display = 'none';
+      return;
+    }
+
+    empty.style.display = 'none';
+    stats.style.display = '';
+
+    var dryRun = bot.mode !== 'live';
+    pill.textContent = dryRun ? 'DRY-RUN (no orders)' : 'LIVE (demo)';
+    pill.className = 'pill ' + (dryRun ? 'dryrun' : 'live-bot');
+
+    document.getElementById('bot-netpos').textContent =
+      (bot.net_position != null) ? String(bot.net_position) : '—';
+    document.getElementById('bot-balance').textContent = fmtMoney(bot.balance_dollars);
+    document.getElementById('bot-pnl').textContent = fmtSigned(bot.paper_pnl_dollars);
+    document.getElementById('bot-openmkts').textContent =
+      (bot.open_markets != null) ? String(bot.open_markets) : '—';
+
+    warn.style.display = (bot.kalshi_ok === false) ? '' : 'none';
+
+    var recent = Array.isArray(bot.recent) ? bot.recent : [];
+    var listEl = document.getElementById('bot-recent-list');
+    if(recent.length){
+      recentWrap.style.display = '';
+      listEl.innerHTML = recent.slice().reverse().map(function(d){
+        var market = (d && d.market != null) ? d.market : '—';
+        var signal = (d && d.signal != null) ? d.signal : '—';
+        var action = (d && d.action != null) ? d.action : '—';
+        return '<div class="bot-recent-row"><span class="m">' + market + '</span>' +
+          '<span>' + signal + '</span><span>' + action + '</span></div>';
+      }).join('');
+    } else {
+      recentWrap.style.display = 'none';
+    }
   }
 
   function fmtMs1(v){
