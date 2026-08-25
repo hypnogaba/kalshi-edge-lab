@@ -1,0 +1,40 @@
+# ────────────────────────────────────────────────────────────────────────
+# kalshi-edge-lab — live latency race (scripts.dz_latency_race).
+#
+# Runs the DoubleZero edge feed (AF_PACKET on the tunnel, needs CAP_NET_RAW)
+# and Kalshi's public perps WebSocket side by side on ONE host, matches the
+# same trade across both, and writes a rolling latency summary
+# (data/dz_latency.json) for the dashboard's scoreboard.
+#
+# Needs a Kalshi PROD key in .env (KALSHI_PROD_KEY_ID + secrets/kalshi_prod_key.pem)
+# for the public margin WS handshake.
+#
+# TEMPLATE: replace <REPO_PATH>. Install (as root — AF_PACKET needs privileges):
+#   sed -e "s|<REPO_PATH>|$(pwd)|g" deploy/dz-race.service \
+#       | sudo tee /etc/systemd/system/dz-race.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now dz-race
+#
+# Manage:  systemctl status dz-race ; journalctl -u dz-race -f
+# Prereq:  the DZ tunnel must be up (doublezero connect ... --subscribe-feed ...).
+# ────────────────────────────────────────────────────────────────────────
+
+[Unit]
+Description=kalshi-edge-lab live latency race (DoubleZero vs public Kalshi perps)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=<REPO_PATH>
+EnvironmentFile=-<REPO_PATH>/.env
+ExecStart=<REPO_PATH>/.venv/bin/python -m scripts.dz_latency_race \
+    --ticker KXBTCPERP --link doublezero1 --group 233.84.178.3 \
+    --mktdata-port 31000 --refdata-port 41000 \
+    --window-min 30 --out data/dz_latency.json
+AmbientCapabilities=CAP_NET_RAW
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

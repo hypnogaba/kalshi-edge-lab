@@ -1,16 +1,12 @@
-"""Live web dashboard service: FastAPI app that refreshes real Kalshi + Binance +
-bot-signal data in the background and serves it to a browser over SSE (and a plain
-JSON endpoint), plus a self-contained monochrome HTML page.
+"""Public dashboard for the DoubleZero Kalshi crypto-perps edge feed.
 
-Reuses the same building blocks as bot/run.py — no re-implementation of Kalshi
-selection, spot-fetch, or signal logic:
-  - sources.kalshi_rest.client.KalshiRestClient  (markets/trades)
-  - sources.kalshi_rest.selector.{parse_strike,nearest_markets}
-  - bot.run.{is_threshold_ticker,fetch_one_shot_spot}
-  - bot.signal.{decide,SignalConfig,Decision}
-  - bot.config.BotConfig (default tuning)
-
-DEMO/read-only: this service never places orders.
+A read-only FastAPI app that serves a self-contained monochrome page showing,
+live: (1) a latency benchmark of the DoubleZero edge feed vs Kalshi's public
+perps WebSocket, and (2) the live decoded feed for every Kalshi crypto
+perpetual. It only reads two JSON snapshots written by the two collector
+services and never places orders or touches funds:
+  - data/dz_latency.json     (scripts.dz_latency_race)
+  - data/dz_feed_state.json  (scripts.dz_live_feed)
 """
 from __future__ import annotations
 
@@ -25,138 +21,48 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
-from bot.config import BotConfig
-from bot.run import fetch_one_shot_spot, is_threshold_ticker
-from bot.signal import Decision, SignalConfig, decide
-from sources.kalshi_rest.client import KalshiRestClient
-from sources.kalshi_rest.selector import nearest_markets, parse_strike
+REFRESH_SECONDS = float(os.environ.get("EDGE_WEB_INTERVAL", "2"))
+DZ_FEED_STATE_PATH = Path("data/dz_feed_state.json")
+DZ_LATENCY_PATH = Path("data/dz_latency.json")
+DZ_FRESH_SECONDS = 15  # a snapshot older than this is treated as not-live
 
-REFRESH_SECONDS = float(os.environ.get("EDGE_WEB_INTERVAL", "3"))
-NEAR = int(os.environ.get("EDGE_WEB_NEAR", "8"))
-RACE_STATS_PATH = Path("data/race/race_stats.json")
-WHATIF_PATH = Path("data/race/whatif.json")
-BOT_STATE_PATH = Path("data/bot_state.json")
-_SERIES = ("KXBTC", "KXBTCD")
-
-# Module-level live state, served as-is by /api/state and /events.
 STATE: dict = {
-    "spot": None,
     "updated_ns": None,
     "updated_iso": None,
-    "markets": [],
     "dz_feed": "pending",
-    "race": None,
-    "whatif": None,
-    "bot": None,
+    "dz_live": None,
+    "latency": None,
 }
 
-_watchlist: list[str] | None = None  # built once, cached (see _ensure_watchlist)
 _refresh_task: asyncio.Task | None = None
 
 
-def _signal_config() -> SignalConfig:
-    cfg = BotConfig.from_env()
-    return SignalConfig(cfg.entry_dollars, cfg.max_yes_cents, cfg.min_yes_cents)
-
-
-async def _ensure_watchlist(client: KalshiRestClient, spot: float | None) -> list[str]:
-    """Build the near-money threshold-market watchlist once (merging KXBTC + KXBTCD)
-    and cache it. Only caches a non-empty result so a transient failure on the very
-    first refresh doesn't wedge the dashboard empty forever."""
-    global _watchlist
-    if _watchlist is not None:
-        return _watchlist
-    if spot is None:
-        return []
-
-    tickers: list[str] = []
-    for series in _SERIES:
-        try:
-            markets = await asyncio.to_thread(client.markets, series)
-        except Exception:  # noqa: BLE001, S112 - one bad series must not break selection
-            continue
-        tickers.extend(m["ticker"] for m in markets if m.get("ticker"))
-
-    threshold_tickers = [t for t in tickers if is_threshold_ticker(t) and parse_strike(t) is not None]
-    if not threshold_tickers:
-        return []
-
-    built = nearest_markets(threshold_tickers, spot=spot, n=NEAR)
-    if built:
-        _watchlist = built
-    return built
-
-
-async def refresh_once(client: KalshiRestClient, sig_cfg: SignalConfig) -> None:
-    """One refresh cycle: Binance spot, per-market Kalshi trade -> signal, race stats."""
+def _read_fresh(path: Path) -> dict | None:
+    """Load a collector JSON snapshot, or None if missing/stale/malformed."""
+    if not path.exists():
+        return None
     try:
-        spot = await asyncio.to_thread(fetch_one_shot_spot)
-    except Exception:  # noqa: BLE001 - keep last-known spot on failure
-        spot = None
-    if spot is not None:
-        STATE["spot"] = spot
+        data = json.loads(path.read_text())
+    except Exception:  # noqa: BLE001 - malformed => treat as absent
+        return None
+    if time.time() - float(data.get("updated_at", 0)) >= DZ_FRESH_SECONDS:
+        return None
+    return data
 
-    watchlist = await _ensure_watchlist(client, STATE["spot"])
 
-    markets_out = []
-    for ticker in watchlist:
-        strike = parse_strike(ticker)
-        yes_cents = None
-        try:
-            trades = await asyncio.to_thread(client.trades, ticker, 1)
-            if trades:
-                yes_cents = round(float(trades[0]["yes_price_dollars"]) * 100)
-        except Exception:  # noqa: BLE001 - one bad market must not break the refresh
-            yes_cents = None
-
-        signal_val = Decision.HOLD.value
-        if strike is not None and STATE["spot"] is not None and yes_cents is not None:
-            try:
-                signal_val = decide(strike, True, yes_cents, STATE["spot"], sig_cfg).value
-            except Exception:  # noqa: BLE001 - fall back to HOLD
-                signal_val = Decision.HOLD.value
-
-        markets_out.append(
-            {"ticker": ticker, "strike": strike, "yes_cents": yes_cents, "signal": signal_val}
-        )
-    STATE["markets"] = markets_out
-
-    if RACE_STATS_PATH.exists():
-        try:
-            STATE["race"] = json.loads(RACE_STATS_PATH.read_text())
-            STATE["dz_feed"] = "live"
-        except Exception:  # noqa: BLE001 - malformed file, treat as not-live
-            STATE["race"] = None
-            STATE["dz_feed"] = "pending"
-    else:
-        STATE["race"] = None
-        STATE["dz_feed"] = "pending"
-
-    if WHATIF_PATH.exists():
-        try:
-            STATE["whatif"] = json.loads(WHATIF_PATH.read_text())
-        except Exception:  # noqa: BLE001 - malformed file, treat as not-ready
-            STATE["whatif"] = None
-    else:
-        STATE["whatif"] = None
-
-    if BOT_STATE_PATH.exists():
-        try:
-            STATE["bot"] = json.loads(BOT_STATE_PATH.read_text())
-        except Exception:  # noqa: BLE001 - malformed file, treat as bot not running
-            STATE["bot"] = None
-    else:
-        STATE["bot"] = None
-
+async def refresh_once() -> None:
+    live = _read_fresh(DZ_FEED_STATE_PATH)
+    STATE["dz_live"] = live
+    STATE["dz_feed"] = "live" if live else "pending"
+    STATE["latency"] = _read_fresh(DZ_LATENCY_PATH)
     STATE["updated_ns"] = time.monotonic_ns()
     STATE["updated_iso"] = datetime.now(UTC).isoformat()
 
 
-async def _refresh_loop(client: KalshiRestClient) -> None:
-    sig_cfg = _signal_config()
+async def _refresh_loop() -> None:
     while True:
         try:
-            await refresh_once(client, sig_cfg)
+            await refresh_once()
         except Exception:  # noqa: BLE001, S110 - background loop must never die
             pass
         await asyncio.sleep(REFRESH_SECONDS)
@@ -165,15 +71,13 @@ async def _refresh_loop(client: KalshiRestClient) -> None:
 @contextlib.asynccontextmanager
 async def _lifespan(app: FastAPI):
     global _refresh_task
-    client = KalshiRestClient()
-    _refresh_task = asyncio.create_task(_refresh_loop(client))
+    _refresh_task = asyncio.create_task(_refresh_loop())
     try:
         yield
     finally:
         _refresh_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await _refresh_task
-        client.close()
 
 
 app = FastAPI(lifespan=_lifespan)
@@ -207,26 +111,26 @@ _PAGE_HTML = """<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Edge Latency Lab — live</title>
+<title>Kalshi Perps over DoubleZero</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
   :root{
     --ink:#FFFFFF; --panel:#FFFFFF; --panel-2:#F2F3F5; --line:rgba(0,0,0,.13);
-    --fg:#0A0A0B; --muted:#585A61; --faint:#8A8D95;
+    --fg:#0A0A0B; --muted:#585A61; --faint:#8A8D95; --accent:#12B07E;
     --shadow:0 1px 0 rgba(0,0,0,.03), 0 10px 30px -22px rgba(0,0,0,.4);
   }
   @media (prefers-color-scheme:dark){
     :root:not([data-theme="light"]){
       --ink:#09090A; --panel:#141416; --panel-2:#1B1C1F; --line:rgba(255,255,255,.14);
-      --fg:#ECEDEF; --muted:#A0A2A9; --faint:#6C6E76;
+      --fg:#ECEDEF; --muted:#A0A2A9; --faint:#6C6E76; --accent:#3AD699;
       --shadow:0 1px 0 rgba(0,0,0,.5), 0 18px 44px -26px rgba(0,0,0,.9);
     }
   }
   :root[data-theme="dark"]{
     --ink:#09090A; --panel:#141416; --panel-2:#1B1C1F; --line:rgba(255,255,255,.14);
-    --fg:#ECEDEF; --muted:#A0A2A9; --faint:#6C6E76;
+    --fg:#ECEDEF; --muted:#A0A2A9; --faint:#6C6E76; --accent:#3AD699;
     --shadow:0 1px 0 rgba(0,0,0,.5), 0 18px 44px -26px rgba(0,0,0,.9);
   }
   :root[data-theme="light"]{
@@ -241,9 +145,14 @@ _PAGE_HTML = """<!doctype html>
     font-family:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
     font-size:16px; line-height:1.55; -webkit-font-smoothing:antialiased}
   .wrap{max-width:960px; margin:0 auto; padding:0 24px}
+  h1{font-family:"Archivo",system-ui,sans-serif; font-weight:800; letter-spacing:-.01em; margin:0}
   a{color:var(--fg); text-decoration:underline; text-underline-offset:2px; text-decoration-color:var(--faint)}
   a:hover{text-decoration-color:var(--fg)}
-  h1{font-family:"Archivo",system-ui,sans-serif; font-weight:800; letter-spacing:-.01em; margin:0}
+  .winstrip{display:flex; gap:2px; align-items:flex-end; height:34px; margin:2px 0 2px}
+  .ws-cell{flex:1 1 0; min-width:2px; height:100%; background:var(--line); border-radius:1px}
+  .ws-cell.win{background:var(--accent)}
+  .ws-legend{display:flex; gap:16px; margin:8px 0 0; font-family:"IBM Plex Mono"; font-size:11px; color:var(--faint)}
+  .ws-dot{display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:6px; vertical-align:middle}
   .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace; font-variant-numeric:tabular-nums}
   header.bar{position:sticky; top:0; z-index:20; backdrop-filter:blur(10px);
     background:color-mix(in srgb, var(--ink) 88%, transparent); border-bottom:1px solid var(--line)}
@@ -255,32 +164,25 @@ _PAGE_HTML = """<!doctype html>
   .pill.live{border-color:var(--fg); color:var(--fg)}
   .pill.pending{color:var(--faint); border-style:dashed}
   .updated{font-family:"IBM Plex Mono"; font-size:12px; color:var(--faint); white-space:nowrap}
-  main{padding:32px 0 20px}
-  .spotline{font-family:"IBM Plex Mono"; font-size:13px; color:var(--muted); margin:0 0 18px}
-  .spotline b{color:var(--fg); font-weight:600; font-size:15px}
+  main{padding:30px 0 20px}
   .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); overflow:hidden}
   table.tbl{width:100%; border-collapse:collapse; font-family:"IBM Plex Mono"; font-size:13px}
   .tbl th,.tbl td{text-align:left; padding:10px 14px; border-bottom:1px solid var(--line)}
   .tbl th{font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); font-weight:500}
-  .tbl td.num{text-align:right; font-variant-numeric:tabular-nums}
+  .tbl th.num,.tbl td.num{text-align:right; font-variant-numeric:tabular-nums}
   .tbl tr:last-child td{border-bottom:0}
-  .chip{font-family:"IBM Plex Mono"; font-size:10.5px; letter-spacing:.04em; text-transform:uppercase;
-    padding:2px 8px; border-radius:5px; border:1px solid var(--fg); white-space:nowrap; display:inline-block}
-  .chip.yes{background:var(--fg); color:var(--ink)}
-  .chip.no{background:transparent; color:var(--fg)}
-  .chip.hold{background:transparent; color:var(--faint); border-color:var(--line); border-style:dashed}
   .empty{padding:22px 14px; color:var(--faint); font-family:"IBM Plex Mono"; font-size:13px}
-  #race-line{margin:14px 2px 0; font-family:"IBM Plex Mono"; font-size:12.5px; color:var(--muted)}
 
-  .edge-panel{margin:26px 0 34px}
-  .edge-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px}
-  .edge-panel h2{font-family:"Archivo",system-ui,sans-serif; font-weight:800;
-    letter-spacing:-.01em; font-size:21px; margin:0}
-  .edge-explainer{font-family:"IBM Plex Mono"; font-size:12.5px; color:var(--muted);
-    margin:0 0 20px; max-width:620px}
+  .panel{margin:24px 0 34px}
+  .phead{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px}
+  .panel h2{font-family:"Archivo",system-ui,sans-serif; font-weight:800; letter-spacing:-.01em; font-size:21px; margin:0}
+  .explainer{font-family:"IBM Plex Mono"; font-size:12.5px; color:var(--muted); margin:0 0 20px; max-width:640px}
+  .subnote{margin:10px 0 0; font-family:"IBM Plex Mono"; font-size:12px; color:var(--faint)}
+  .statrow{margin:6px 0 0; font-family:"IBM Plex Mono"; font-size:12px; color:var(--muted)}
+  .meta{margin:12px 2px 0; font-family:"IBM Plex Mono"; font-size:12px; color:var(--faint)}
+
   .scoreboard{display:grid; grid-template-columns:auto 1fr; gap:28px; align-items:center;
-    background:var(--panel); border:1px solid var(--line); border-radius:14px;
-    box-shadow:var(--shadow); padding:22px 24px}
+    background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); padding:22px 24px}
   @media (max-width:640px){ .scoreboard{grid-template-columns:1fr; justify-items:center; text-align:center} }
   .gauge-wrap{display:flex; flex-direction:column; align-items:center; gap:10px}
   .gauge{--pct:0; width:128px; height:128px; border-radius:50%;
@@ -289,175 +191,122 @@ _PAGE_HTML = """<!doctype html>
   .gauge-hole{width:98px; height:98px; border-radius:50%; background:var(--panel);
     display:flex; flex-direction:column; align-items:center; justify-content:center}
   .gauge-num{font-family:"Archivo",system-ui,sans-serif; font-weight:800; font-size:26px; letter-spacing:-.01em}
-  .gauge-unit{font-family:"IBM Plex Mono"; font-size:9.5px; letter-spacing:.08em;
-    text-transform:uppercase; color:var(--faint); margin-top:2px}
-  .gauge-label{margin:0; font-family:"IBM Plex Mono"; font-size:11px; color:var(--faint);
-    max-width:150px; text-align:center}
+  .gauge-unit{font-family:"IBM Plex Mono"; font-size:9.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); margin-top:2px}
+  .gauge-label{margin:0; font-family:"IBM Plex Mono"; font-size:11px; color:var(--faint); max-width:150px; text-align:center}
   .compare-title{margin:0 0 10px; font-size:14px; font-weight:600}
   .compare-row{display:flex; align-items:baseline; gap:10px; padding:6px 0; border-bottom:1px solid var(--line)}
   .compare-row:last-of-type{border-bottom:0}
-  .compare-k{font-family:"IBM Plex Mono"; font-size:11px; letter-spacing:.06em;
-    text-transform:uppercase; color:var(--faint); width:32px}
+  .compare-k{font-family:"IBM Plex Mono"; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); width:32px}
   .compare-v{font-size:15px; font-weight:600}
-  .edge-subnote{margin:10px 0 0; font-family:"IBM Plex Mono"; font-size:12px; color:var(--faint)}
-  .edge-statrow{margin:6px 0 0; font-family:"IBM Plex Mono"; font-size:12px; color:var(--muted)}
 
-  .whatif-panel{margin:26px 0 34px}
-  .whatif-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px}
-  .whatif-panel h2{font-family:"Archivo",system-ui,sans-serif; font-weight:800;
-    letter-spacing:-.01em; font-size:21px; margin:0}
-  .whatif-explainer{font-family:"IBM Plex Mono"; font-size:12.5px; color:var(--muted);
-    margin:0 0 20px; max-width:620px}
-  .whatif-card{background:var(--panel); border:1px solid var(--line); border-radius:14px;
-    box-shadow:var(--shadow); padding:22px 24px}
-  .whatif-headline{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap}
-  .whatif-dollar{font-family:"Archivo",system-ui,sans-serif; font-weight:800;
-    font-size:32px; letter-spacing:-.01em}
-  .whatif-caption{font-family:"IBM Plex Mono"; font-size:11px; letter-spacing:.04em;
-    text-transform:uppercase; color:var(--faint)}
-  .whatif-statrow{margin:10px 0 0; font-family:"IBM Plex Mono"; font-size:12.5px; color:var(--muted)}
-  .whatif-subnote{margin:6px 0 0; font-family:"IBM Plex Mono"; font-size:12px; color:var(--faint)}
-  .whatif-ticker{margin-top:14px; padding-top:14px; border-top:1px solid var(--line)}
-  .whatif-ticker-row{font-family:"IBM Plex Mono"; font-size:12px; color:var(--muted);
-    padding:3px 0}
+  .stats{display:grid; grid-template-columns:repeat(4,1fr); gap:16px;
+    background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); padding:20px 22px}
+  @media (max-width:640px){ .stats{grid-template-columns:1fr 1fr} }
+  .stat{display:flex; flex-direction:column; gap:4px}
+  .stat-k{font-family:"IBM Plex Mono"; font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint)}
+  .stat-v{font-family:"IBM Plex Mono"; font-size:18px; font-weight:600; font-variant-numeric:tabular-nums}
 
-  .bot-panel{margin:26px 0 34px}
-  .bot-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px}
-  .bot-panel h2{font-family:"Archivo",system-ui,sans-serif; font-weight:800;
-    letter-spacing:-.01em; font-size:21px; margin:0}
-  .pill.dryrun{color:var(--muted); border-style:dashed}
-  .pill.live-bot{border-color:var(--fg); color:var(--fg)}
-  .bot-empty{padding:22px 14px; color:var(--faint); font-family:"IBM Plex Mono"; font-size:13px;
-    background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow)}
-  .bot-stats{display:grid; grid-template-columns:repeat(4,1fr); gap:16px;
-    background:var(--panel); border:1px solid var(--line); border-radius:14px;
-    box-shadow:var(--shadow); padding:20px 22px}
-  @media (max-width:640px){ .bot-stats{grid-template-columns:1fr 1fr} }
-  .bot-stat{display:flex; flex-direction:column; gap:4px}
-  .bot-stat-k{font-family:"IBM Plex Mono"; font-size:10.5px; letter-spacing:.08em;
-    text-transform:uppercase; color:var(--faint)}
-  .bot-stat-v{font-family:"IBM Plex Mono"; font-size:18px; font-weight:600; font-variant-numeric:tabular-nums}
-  .bot-recent{margin-top:16px; background:var(--panel); border:1px solid var(--line);
-    border-radius:14px; box-shadow:var(--shadow); padding:6px 18px}
-  .bot-recent-title{font-family:"IBM Plex Mono"; font-size:10.5px; letter-spacing:.08em;
-    text-transform:uppercase; color:var(--faint); margin:14px 0 6px}
-  .bot-recent-row{display:flex; gap:10px; padding:7px 0; border-bottom:1px solid var(--line);
-    font-family:"IBM Plex Mono"; font-size:12.5px; color:var(--muted); flex-wrap:wrap}
-  .bot-recent-row:last-child{border-bottom:0}
-  .bot-recent-row .m{color:var(--fg)}
-  .kalshi-warn{margin:8px 2px 0; font-family:"IBM Plex Mono"; font-size:11.5px; color:var(--faint)}
-  footer{border-top:1px solid var(--line); margin-top:28px; padding:22px 0 40px;
-    color:var(--muted); font-family:"IBM Plex Mono"; font-size:12.5px}
+  .facts{display:grid; grid-template-columns:1fr 1fr; gap:14px 28px;
+    background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); padding:22px 24px}
+  @media (max-width:640px){ .facts{grid-template-columns:1fr} }
+  .fact-k{font-family:"IBM Plex Mono"; font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); margin-bottom:2px}
+  .fact-v{font-size:14px}
+  footer{border-top:1px solid var(--line); margin-top:28px; padding:20px 0 40px; color:var(--faint); font-family:"IBM Plex Mono"; font-size:12px}
   :focus-visible{outline:2px solid var(--fg); outline-offset:2px; border-radius:6px}
 </style>
 
 <header class="bar">
   <div class="wrap bar-in">
-    <h1>Edge Latency Lab — live</h1>
-    <span class="pill pending" id="dzpill">DZ feed: pending</span>
+    <h1>Kalshi Perps &middot; DoubleZero</h1>
+    <span class="pill pending" id="dzpill">feed: pending</span>
     <span class="spacer"></span>
-    <span class="updated mono" id="updated">updated —</span>
+    <span class="updated mono" id="updated">updated &mdash;</span>
   </div>
 </header>
 
 <main class="wrap">
-  <section class="edge-panel" aria-labelledby="edge-title">
-    <div class="edge-head">
-      <h2 id="edge-title">Edge scoreboard</h2>
-      <span class="pill pending" id="edge-pill">awaiting feed access</span>
+  <section class="panel" aria-labelledby="score-title">
+    <div class="phead">
+      <h2 id="score-title">How much sooner you get the data</h2>
     </div>
-    <p class="edge-explainer">Benchmarks how much sooner the DoubleZero edge feed delivers the same Kalshi trades than the public WebSocket &mdash; per-trade, on one host, one clock.</p>
+    <p class="explainer">Two ways to get the <b>same Kalshi trade</b> to your server, side by side: the <a href="https://doublezero.xyz/edge/subscribe"><b>DoubleZero edge feed</b></a> vs <b>Kalshi&rsquo;s own public API</b> &mdash; the perpetuals WebSocket (<span class="mono">external-api-margin-ws.kalshi.com</span>) that anyone can connect to directly. Both are received on one machine and timed on one clock, and each trade is matched across the two by exchange timestamp, price and size &mdash; so there is no cross-machine clock skew. Below: how often, and by how much, the DoubleZero copy of a trade arrives first.</p>
     <div class="scoreboard">
       <div class="gauge-wrap">
-        <div class="gauge" id="edge-gauge">
+        <div class="gauge" id="score-gauge">
           <div class="gauge-hole">
-            <div class="gauge-num mono" id="edge-winrate">&mdash;</div>
-            <div class="gauge-unit">win rate</div>
+            <div class="gauge-num mono" id="score-winrate">&mdash;</div>
+            <div class="gauge-unit">arrives first</div>
           </div>
         </div>
-        <p class="gauge-label">of trades seen first via DoubleZero</p>
+        <p class="gauge-label">of trades reach you first over DoubleZero</p>
       </div>
       <div class="compare">
-        <h3 class="compare-title">DoubleZero vs public Kalshi WS</h3>
-        <div class="compare-row"><span class="compare-k">p50</span><span class="compare-v mono" id="edge-p50">&mdash; ms</span></div>
-        <div class="compare-row"><span class="compare-k">p95</span><span class="compare-v mono" id="edge-p95">&mdash; ms</span></div>
-        <p class="edge-statrow mono" id="edge-statrow">matched &mdash; trades &middot; &mdash;</p>
-        <p class="edge-subnote" id="edge-subnote">Real numbers appear the moment the DoubleZero feed is connected.</p>
+        <h3 class="compare-title">Typical lead over the public feed</h3>
+        <div class="compare-row"><span class="compare-k" style="width:auto; letter-spacing:.02em">Median</span><span class="compare-v mono" id="score-p50" style="font-size:22px">&mdash; ms</span></div>
+        <p class="statrow mono" id="score-statrow">matched &mdash; trades &middot; rolling window</p>
+        <p class="subnote" id="score-note">Live, rolling window &mdash; one host, one monotonic clock, no cross-machine skew.</p>
+      </div>
+    </div>
+    <div id="winstrip-wrap" style="margin-top:16px; display:none">
+      <div class="winstrip" id="winstrip"></div>
+      <div class="ws-legend">
+        <span><span class="ws-dot" style="background:var(--accent)"></span>DoubleZero first</span>
+        <span><span class="ws-dot" style="background:var(--line)"></span>public first</span>
+        <span id="ws-count"></span>
       </div>
     </div>
   </section>
 
-  <section class="whatif-panel" aria-labelledby="whatif-title">
-    <div class="whatif-head">
-      <h2 id="whatif-title">What-if with DoubleZero</h2>
-      <span class="pill pending" id="whatif-pill">awaiting feed</span>
+  <section class="panel" aria-labelledby="feed-title">
+    <div class="phead">
+      <h2 id="feed-title">The feed, live right now</h2>
     </div>
-    <p class="whatif-explainer">If a bot could act the instant the DoubleZero feed saw each matched trade, instead of waiting for the public feed to catch up &mdash; how much would that have been worth? Modeled on captured trades, top-of-book, no slippage.</p>
-    <div class="whatif-card">
-      <div class="whatif-headline">
-        <span class="whatif-dollar mono" id="whatif-dollars">&mdash;</span>
-        <span class="whatif-caption">theoretical / modeled &mdash; not real fills</span>
-      </div>
-      <p class="whatif-statrow mono" id="whatif-statrow">&mdash; theoretical trades &middot; &mdash; median &Delta; ms &middot; &mdash; win rate</p>
-      <p class="whatif-subnote" id="whatif-subnote">Real numbers appear once both feeds are captured.</p>
-      <div class="whatif-ticker" id="whatif-ticker" style="display:none"></div>
+    <p class="explainer">Every Kalshi crypto perpetual &mdash; full top-of-book &amp; trades &mdash; streaming over the DoubleZero edge network and decoded here in real time. Live throughput below.</p>
+    <div class="stats" id="feed-stats" style="display:none">
+      <div class="stat"><span class="stat-k">Markets live</span><span class="stat-v mono" id="feed-mkts">&mdash;</span></div>
+      <div class="stat"><span class="stat-k">Trades / s</span><span class="stat-v mono" id="feed-tps">&mdash;</span></div>
+      <div class="stat"><span class="stat-k">Msgs / s</span><span class="stat-v mono" id="feed-mps">&mdash;</span></div>
+      <div class="stat"><span class="stat-k">Feed uptime</span><span class="stat-v mono" id="feed-uptime">&mdash;</span></div>
     </div>
+    <div class="card" style="margin-top:16px">
+      <table class="tbl">
+        <thead><tr>
+          <th>Perp</th>
+          <th class="num">Bid</th>
+          <th class="num">Ask</th>
+          <th class="num">Last trade</th>
+          <th class="num">Trades</th>
+        </tr></thead>
+        <tbody id="feed-body">
+          <tr><td colspan="5" class="empty">connecting to the feed&hellip;</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="meta mono" id="feed-meta"></p>
   </section>
 
-  <p class="spotline">BTC spot <b id="spot">—</b></p>
-  <div class="card">
-    <table class="tbl">
-      <thead>
-        <tr>
-          <th>Market (BTC &ge; strike?)</th>
-          <th class="num">Strike</th>
-          <th class="num">Yes&cent;</th>
-          <th class="num">Spot&minus;Strike</th>
-          <th>Signal</th>
-        </tr>
-      </thead>
-      <tbody id="mkt-body">
-        <tr><td colspan="5" class="empty">waiting for first refresh…</td></tr>
-      </tbody>
-    </table>
-  </div>
-  <p id="race-line" style="display:none"></p>
-
-  <section class="bot-panel" aria-labelledby="bot-title">
-    <div class="bot-head">
-      <h2 id="bot-title">Demo bot</h2>
-      <span class="pill pending" id="bot-pill">not running</span>
-    </div>
-    <p class="bot-empty" id="bot-empty">bot not running</p>
-    <div class="bot-stats" id="bot-stats" style="display:none">
-      <div class="bot-stat"><span class="bot-stat-k">Net position</span><span class="bot-stat-v mono" id="bot-netpos">&mdash;</span></div>
-      <div class="bot-stat"><span class="bot-stat-k">Balance</span><span class="bot-stat-v mono" id="bot-balance">&mdash;</span></div>
-      <div class="bot-stat"><span class="bot-stat-k">Paper PnL</span><span class="bot-stat-v mono" id="bot-pnl">&mdash;</span></div>
-      <div class="bot-stat"><span class="bot-stat-k">Open markets</span><span class="bot-stat-v mono" id="bot-openmkts">&mdash;</span></div>
-    </div>
-    <p class="kalshi-warn" id="bot-kalshi-warn" style="display:none">last Kalshi portfolio fetch failed &mdash; showing stale numbers</p>
-    <div class="bot-recent" id="bot-recent" style="display:none">
-      <p class="bot-recent-title">Recent decisions</p>
-      <div id="bot-recent-list"></div>
+  <section class="panel" aria-labelledby="about-title">
+    <div class="phead"><h2 id="about-title">What it is</h2></div>
+    <div class="facts">
+      <div><div class="fact-k">Coverage</div><div class="fact-v">All Kalshi crypto perpetuals &mdash; BTC, ETH, SOL, XRP, and more.</div></div>
+      <div><div class="fact-k">Data</div><div class="fact-v">Top-of-book (best bid/ask) plus every executed trade.</div></div>
+      <div><div class="fact-k">Transport</div><div class="fact-v">Binary multicast over the DoubleZero edge network.</div></div>
+      <div><div class="fact-k">Decoding</div><div class="fact-v">Fixed-size wire format, decoded deterministically to normalized events.</div></div>
+      <div><div class="fact-k">Benchmark baseline</div><div class="fact-v">Kalshi&rsquo;s own public perps WebSocket (<span class="mono">external-api-margin-ws.kalshi.com</span>) &mdash; the same data, the standard public way to get it.</div></div>
+      <div><div class="fact-k">Method</div><div class="fact-v">One host, one monotonic clock; trades matched by exchange timestamp + price + size.</div></div>
     </div>
   </section>
 </main>
 
 <footer>
   <div class="wrap">
-    <a href="https://github.com/hypnogaba/kalshi-edge-lab">github.com/hypnogaba/kalshi-edge-lab</a>
-    <p style="margin:10px 0 0; font-size:11.5px; color:var(--faint)">Independent project. Not affiliated with, endorsed by, or an official product of DoubleZero or Kalshi — those names refer only to the systems being measured.</p>
+    Latency benchmark of the DoubleZero Kalshi perps edge feed vs Kalshi&rsquo;s public API. Measured on one host with a single monotonic clock; figures are live over a rolling window.
   </div>
 </footer>
 
 <script>
 (function(){
   var lastState = null;
-
-  function fmtMoney(n){
-    if(n == null) return '—';
-    return '$' + Number(n).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
-  }
 
   function renderUpdated(){
     var el = document.getElementById('updated');
@@ -466,206 +315,119 @@ _PAGE_HTML = """<!doctype html>
     el.textContent = 'updated ' + secs + 's ago';
   }
 
-  function render(state){
-    lastState = state;
-    document.getElementById('spot').textContent = fmtMoney(state.spot);
+  function soonerTxt(v){
+    // v = dz - public in ms; negative = DoubleZero first (sooner).
+    if(v == null || isNaN(v)) return '— ms';
+    var s = -Number(v);
+    return s >= 0 ? s.toFixed(1) + ' ms sooner' : Math.abs(s).toFixed(1) + ' ms slower';
+  }
 
+  function fmtNum(n){
+    if(n == null || isNaN(n)) return '—';
+    var v = Number(n), a = Math.abs(v);
+    var dp = a >= 1000 ? 0 : (a >= 1 ? 2 : 6);
+    return v.toLocaleString(undefined,{minimumFractionDigits:dp, maximumFractionDigits:dp});
+  }
+
+  function fmtUptime(s){
+    s = Math.max(0, Math.floor(s||0));
+    var h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60;
+    return (h?h+'h ':'') + (h||m?m+'m ':'') + sec + 's';
+  }
+
+  function renderDzPill(state){
     var pill = document.getElementById('dzpill');
     var live = state.dz_feed === 'live';
-    pill.textContent = 'DZ feed: ' + (state.dz_feed || 'pending');
+    pill.textContent = 'feed: ' + (live ? 'live' : 'pending');
     pill.className = 'pill ' + (live ? 'live' : 'pending');
-
-    var tbody = document.getElementById('mkt-body');
-    var markets = state.markets || [];
-    if(!markets.length){
-      tbody.innerHTML = '<tr><td colspan="5" class="empty">no markets yet…</td></tr>';
-    } else {
-      tbody.innerHTML = markets.map(function(m){
-        var strike = m.strike != null ? Number(m.strike).toLocaleString(undefined,{maximumFractionDigits:2}) : '—';
-        var yesCents = m.yes_cents != null ? m.yes_cents + '¢' : '—';
-        var diff = (state.spot != null && m.strike != null) ? (state.spot - m.strike) : null;
-        var diffTxt = diff != null ? (diff >= 0 ? '+' : '') + diff.toFixed(2) : '—';
-        var sigTxt = 'HOLD', sigClass = 'chip hold';
-        if(m.signal === 'buy_yes'){ sigTxt = 'BUY YES'; sigClass = 'chip yes'; }
-        else if(m.signal === 'buy_no'){ sigTxt = 'BUY NO'; sigClass = 'chip no'; }
-        return '<tr><td>' + m.ticker + '</td>' +
-          '<td class="num">' + strike + '</td>' +
-          '<td class="num">' + yesCents + '</td>' +
-          '<td class="num">' + diffTxt + '</td>' +
-          '<td><span class="' + sigClass + '">' + sigTxt + '</span></td></tr>';
-      }).join('');
-    }
-
-    var raceEl = document.getElementById('race-line');
-    if(state.race && state.race.stats && state.race.stats.n){
-      var s = state.race.stats;
-      raceEl.style.display = '';
-      raceEl.textContent = 'race latency — p50 ' + s.p50_ms + 'ms · p90 ' + s.p90_ms + 'ms · p99 ' + s.p99_ms + 'ms (n=' + s.n + ')';
-    } else {
-      raceEl.style.display = 'none';
-    }
-
-    renderEdge(state);
-    renderWhatif(state);
-    renderBot(state);
-    renderUpdated();
   }
 
-  function fmtSigned(n){
-    if(n == null || isNaN(n)) return '—';
-    var v = Number(n);
-    var sign = v > 0 ? '+' : (v < 0 ? '−' : '');
-    return sign + '$' + Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
-  }
-
-  function renderBot(state){
-    var bot = state && state.bot;
-    var pill = document.getElementById('bot-pill');
-    var empty = document.getElementById('bot-empty');
-    var stats = document.getElementById('bot-stats');
-    var recentWrap = document.getElementById('bot-recent');
-    var warn = document.getElementById('bot-kalshi-warn');
-
-    if(!bot){
-      pill.textContent = 'not running';
-      pill.className = 'pill pending';
-      empty.style.display = '';
-      stats.style.display = 'none';
-      recentWrap.style.display = 'none';
-      warn.style.display = 'none';
-      return;
-    }
-
-    empty.style.display = 'none';
-    stats.style.display = '';
-
-    var dryRun = bot.mode !== 'live';
-    pill.textContent = dryRun ? 'DRY-RUN (no orders)' : 'LIVE (demo)';
-    pill.className = 'pill ' + (dryRun ? 'dryrun' : 'live-bot');
-
-    document.getElementById('bot-netpos').textContent =
-      (bot.net_position != null) ? String(bot.net_position) : '—';
-    document.getElementById('bot-balance').textContent = fmtMoney(bot.balance_dollars);
-    document.getElementById('bot-pnl').textContent = fmtSigned(bot.paper_pnl_dollars);
-    document.getElementById('bot-openmkts').textContent =
-      (bot.open_markets != null) ? String(bot.open_markets) : '—';
-
-    warn.style.display = (bot.kalshi_ok === false) ? '' : 'none';
-
-    var recent = Array.isArray(bot.recent) ? bot.recent : [];
-    var listEl = document.getElementById('bot-recent-list');
-    if(recent.length){
-      recentWrap.style.display = '';
-      listEl.innerHTML = recent.slice().reverse().map(function(d){
-        var market = (d && d.market != null) ? d.market : '—';
-        var signal = (d && d.signal != null) ? d.signal : '—';
-        var action = (d && d.action != null) ? d.action : '—';
-        return '<div class="bot-recent-row"><span class="m">' + market + '</span>' +
-          '<span>' + signal + '</span><span>' + action + '</span></div>';
-      }).join('');
-    } else {
-      recentWrap.style.display = 'none';
-    }
-  }
-
-  function fmtMs1(v){
-    return (v == null || isNaN(v)) ? '—' : Number(v).toFixed(1);
-  }
-
-  function fmtSooner(v){
-    // delta = t_dz - t_public; negative = DoubleZero arrived first (sooner).
-    if(v == null || isNaN(v)) return '— ms';
-    var mag = fmtMs1(Math.abs(v));
-    return v < 0 ? mag + ' ms sooner' : mag + ' ms slower';
-  }
-
-  function renderEdge(state){
-    var pill = document.getElementById('edge-pill');
-    var gauge = document.getElementById('edge-gauge');
-    var winrateEl = document.getElementById('edge-winrate');
-    var p50El = document.getElementById('edge-p50');
-    var p95El = document.getElementById('edge-p95');
-    var statrow = document.getElementById('edge-statrow');
-    var subnote = document.getElementById('edge-subnote');
-
-    var race = state && state.race;
-    var live = state && state.dz_feed === 'live';
-    var stats = (race && race.stats) || null;
-    var winRate = (stats && typeof stats.win_rate === 'number') ? stats.win_rate : null;
-    var p50 = (stats && typeof stats.p50_ms === 'number') ? stats.p50_ms : null;
-    var p95 = (stats && typeof stats.p95_ms === 'number') ? stats.p95_ms : null;
-
-    var ready = !!(race && live && stats && winRate != null);
-
-    pill.textContent = live ? 'Live' : 'awaiting feed access';
-    pill.className = 'pill ' + (live ? 'live' : 'pending');
-
-    gauge.style.setProperty('--pct', ready ? String(Math.max(0, Math.min(100, winRate))) : '0');
-    winrateEl.textContent = ready ? fmtMs1(winRate) + '%' : '—';
-
-    p50El.textContent = ready ? fmtSooner(p50) : '— ms';
-    p95El.textContent = ready ? fmtSooner(p95) : '— ms';
-
-    if(ready){
-      var matched = (race.matched != null) ? race.matched : '—';
-      var matchRate = (typeof race.match_rate === 'number') ? (race.match_rate * 100).toFixed(1) + '%' : '—';
-      statrow.textContent = 'matched ' + matched + ' trades · ' + matchRate;
-      subnote.style.display = 'none';
-    } else {
-      statrow.textContent = 'matched — trades · —';
-      subnote.style.display = '';
-    }
-  }
-
-  function fmtCents(n){
-    if(n == null || isNaN(n)) return '—';
-    var v = Number(n);
-    var sign = v > 0 ? '+' : (v < 0 ? '−' : '');
-    return sign + Math.abs(v).toFixed(1) + '¢';
-  }
-
-  function renderWhatif(state){
-    var pill = document.getElementById('whatif-pill');
-    var dollarsEl = document.getElementById('whatif-dollars');
-    var statrow = document.getElementById('whatif-statrow');
-    var subnote = document.getElementById('whatif-subnote');
-    var ticker = document.getElementById('whatif-ticker');
-
-    var w = state && state.whatif;
-    var ready = !!(w && typeof w.n === 'number' && w.n > 0 &&
-      typeof w.total_edge_dollars === 'number');
-
-    pill.textContent = ready ? 'modeled' : 'awaiting feed';
-    pill.className = 'pill ' + (ready ? 'live' : 'pending');
-
+  function renderScore(state){
+    var L = state && state.latency;
+    var gauge = document.getElementById('score-gauge');
+    var wr = document.getElementById('score-winrate');
+    var p50 = document.getElementById('score-p50');
+    var statrow = document.getElementById('score-statrow');
+    var note = document.getElementById('score-note');
+    var ready = !!(L && typeof L.win_rate === 'number' && L.n > 0);
     if(!ready){
-      dollarsEl.textContent = '—';
-      statrow.textContent = '— theoretical trades · — median Δ ms · — win rate';
-      subnote.style.display = '';
-      ticker.style.display = 'none';
-      ticker.innerHTML = '';
+      gauge.style.setProperty('--pct','0'); wr.textContent = '—';
+      p50.textContent = '— ms';
+      statrow.textContent = 'matched — trades · rolling window';
       return;
     }
+    gauge.style.setProperty('--pct', String(Math.max(0, Math.min(100, L.win_rate))));
+    wr.textContent = L.win_rate.toFixed(0) + '%';
+    p50.textContent = soonerTxt(L.p50_ms);
+    statrow.textContent = 'matched ' + L.n + ' trades · ' + (L.window_min || 30) + '-min window';
+    note.textContent = 'DoubleZero arrives first on ' + L.win_rate.toFixed(0) +
+      '% of matched trades — one host, one monotonic clock, no cross-machine skew.';
+  }
 
-    dollarsEl.textContent = fmtSigned(w.total_edge_dollars);
-    var medianDelta = (typeof w.median_delta_ms === 'number') ? w.median_delta_ms.toFixed(1) : '—';
-    var winRate = (typeof w.win_rate === 'number') ? w.win_rate.toFixed(1) : '—';
-    statrow.textContent = w.n + ' theoretical trades · median Δ ' + medianDelta + ' ms · ' + winRate + '% win rate';
-    subnote.style.display = 'none';
+  function renderWinStrip(state){
+    var L = state && state.latency;
+    var wrap = document.getElementById('winstrip-wrap');
+    var strip = document.getElementById('winstrip');
+    var count = document.getElementById('ws-count');
+    var recent = (L && Array.isArray(L.recent)) ? L.recent : [];
+    if(!recent.length){ wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+    strip.innerHTML = recent.map(function(r){
+      return '<div class="ws-cell' + (r.w ? ' win' : '') + '" title="' + r.d + ' ms"></div>';
+    }).join('');
+    var wins = recent.filter(function(r){ return r.w; }).length;
+    count.textContent = wins + ' / ' + recent.length + ' DoubleZero first';
+  }
 
-    var samples = Array.isArray(w.samples) ? w.samples : [];
-    if(samples.length){
-      ticker.style.display = '';
-      ticker.innerHTML = samples.map(function(s){
-        var edge = (s && typeof s.edge_price === 'number') ? s.edge_price.toFixed(1) : '—';
-        var pub = (s && typeof s.public_price === 'number') ? s.public_price.toFixed(1) : '—';
-        var cents = fmtCents(s && s.edge_cents);
-        return '<div class="whatif-ticker-row">edge @ ' + edge + '¢ vs public @ ' + pub + '¢ · ' + cents + '</div>';
-      }).join('');
-    } else {
-      ticker.style.display = 'none';
-      ticker.innerHTML = '';
+  function renderLiveFeed(state){
+    var d = state && state.dz_live;
+    var stats = document.getElementById('feed-stats');
+    var body = document.getElementById('feed-body');
+    var meta = document.getElementById('feed-meta');
+    if(!d || state.dz_feed !== 'live'){
+      stats.style.display = 'none';
+      body.innerHTML = '<tr><td colspan="5" class="empty">connecting to the feed…</td></tr>';
+      meta.textContent = '';
+      return;
     }
+    stats.style.display = '';
+    document.getElementById('feed-mkts').textContent = (d.market_count != null) ? d.market_count : '—';
+    document.getElementById('feed-tps').textContent = (d.rates && d.rates.trades_per_s != null) ? d.rates.trades_per_s : '—';
+    document.getElementById('feed-mps').textContent = (d.rates && d.rates.msgs_per_s != null) ? Math.round(d.rates.msgs_per_s) : '—';
+    document.getElementById('feed-uptime').textContent = fmtUptime(d.uptime_s);
+
+    var mk = d.markets || {};
+    var keys = Object.keys(mk).sort();
+    if(!keys.length){
+      body.innerHTML = '<tr><td colspan="5" class="empty">no markets yet…</td></tr>';
+    } else {
+      body.innerHTML = keys.map(function(k){
+        var v = mk[k];
+        var last = '—';
+        if(v.last_price != null){
+          last = fmtNum(v.last_price);
+          if(v.last_side){ last += ' <span style="color:var(--faint)">' + String(v.last_side).toUpperCase() + '</span>'; }
+        }
+        return '<tr><td>' + k + '</td>' +
+          '<td class="num">' + fmtNum(v.bid) + '</td>' +
+          '<td class="num">' + fmtNum(v.ask) + '</td>' +
+          '<td class="num">' + last + '</td>' +
+          '<td class="num">' + (v.trades != null ? v.trades : '—') + '</td></tr>';
+      }).join('');
+    }
+    var tot = d.totals || {};
+    meta.textContent = (d.metro || '') + ' edge node · ' +
+      (tot.trades != null ? tot.trades : '—') + ' trades / ' +
+      (tot.quotes != null ? tot.quotes : '—') + ' quotes decoded since start';
+  }
+
+  function render(state){
+    lastState = state;
+    renderDzPill(state);
+    renderScore(state);
+    renderWinStrip(state);
+    renderLiveFeed(state);
+    renderUpdated();
   }
 
   function poll(){
@@ -677,13 +439,8 @@ _PAGE_HTML = """<!doctype html>
 
   if(typeof EventSource !== 'undefined'){
     var es = new EventSource('/events');
-    es.onmessage = function(ev){
-      try { render(JSON.parse(ev.data)); } catch(e) {}
-    };
-    es.onerror = function(){
-      es.close();
-      setInterval(poll, 3000);
-    };
+    es.onmessage = function(ev){ try { render(JSON.parse(ev.data)); } catch(e) {} };
+    es.onerror = function(){ es.close(); setInterval(poll, 3000); };
   } else {
     setInterval(poll, 3000);
   }

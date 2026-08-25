@@ -58,13 +58,73 @@ def _join_multicast_socket(group: str, port: int, iface_ip: str | None) -> socke
     return sock
 
 
-def capture(group: str, mktdata_port: int, refdata_port: int, iface_ip: str | None,
-            out_path: str, duration_s: float | None = None) -> int:
-    """Join both mktdata + refdata multicast ports, stamp+store raw frames.
+# --- AF_PACKET link-layer capture --------------------------------------------
+# On DoubleZero's tunnel interface (doublezero1) a normal IP_ADD_MEMBERSHIP UDP
+# socket receives ZERO datagrams even though the group is joined, the MULTICAST
+# flag is set and rp_filter=0 -- the decapsulated multicast never reaches the IP
+# socket layer. tcpdump (AF_PACKET) sees the full feed, so we tap the interface
+# the same way and parse IP/UDP ourselves, keeping only datagrams addressed to
+# `group` on the mktdata/refdata ports. Verified on mainnet-beta: UDP socket 0
+# pkts vs AF_PACKET ~3.4k pkts / 5 s on 233.84.178.3:31000.
+_ETH_P_IP = 0x0800
+_IPPROTO_UDP = 17
 
-    Blocks until `duration_s` seconds elapse (None runs until interrupted).
-    Returns the number of datagrams captured.
+
+def _capture_afpacket(group: str, ports: set[int], link_ifname: str, out_path: str,
+                      duration_s: float | None) -> int:
+    """Receive off `link_ifname` via AF_PACKET, keep UDP datagrams to `group` on
+    `ports`, stamp each on arrival and store the UDP payload (the DZ frame)."""
+    group_bytes = inet_aton(group)
+    sock = socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(_ETH_P_IP))
+    sock.bind((link_ifname, 0))
+    sock.setblocking(False)
+    frame_count = 0
+    deadline = time.monotonic() + duration_s if duration_s is not None else None
+    with FrameWriter(out_path) as writer:
+        try:
+            while deadline is None or time.monotonic() < deadline:
+                select_timeout = 1.0 if deadline is None else max(0.0, deadline - time.monotonic())
+                readable, _writable, _errored = select.select([sock], [], [], select_timeout)
+                if not readable:
+                    continue
+                try:
+                    data = sock.recv(_RECV_BUFSIZE)
+                except OSError:
+                    continue
+                t_arrival_ns = now_ns()
+                # AF_PACKET/SOCK_DGRAM strips the link header: `data` starts at
+                # the IPv4 header. Filter to UDP -> our group -> our ports.
+                if len(data) < 20 or data[9] != _IPPROTO_UDP:
+                    continue
+                if data[16:20] != group_bytes:  # destination IP
+                    continue
+                ihl = (data[0] & 0x0F) * 4
+                if len(data) < ihl + 8:
+                    continue
+                dport = (data[ihl + 2] << 8) | data[ihl + 3]
+                if dport not in ports:
+                    continue
+                writer.write(t_arrival_ns, data[ihl + 8:])  # UDP payload = DZ frame
+                frame_count += 1
+        finally:
+            sock.close()
+    return frame_count
+
+
+def capture(group: str, mktdata_port: int, refdata_port: int, iface_ip: str | None,
+            out_path: str, duration_s: float | None = None,
+            link_iface: str | None = None) -> int:
+    """Capture raw DZ frames, stamping each on arrival, until `duration_s`
+    elapses (None runs until interrupted). Returns the datagram count.
+
+    If `link_iface` (an interface NAME, e.g. "doublezero1") is given, capture via
+    AF_PACKET -- required on the DZ tunnel, where a UDP multicast socket gets
+    nothing. Otherwise join `group` on both ports as a normal UDP multicast
+    receiver (`iface_ip` is the local interface IP, or None for INADDR_ANY).
     """
+    if link_iface:
+        return _capture_afpacket(group, {mktdata_port, refdata_port}, link_iface,
+                                 out_path, duration_s)
     mktdata_sock = _join_multicast_socket(group, mktdata_port, iface_ip)
     refdata_sock = _join_multicast_socket(group, refdata_port, iface_ip)
     sockets = [mktdata_sock, refdata_sock]
@@ -170,6 +230,9 @@ def main() -> None:
     ap.add_argument("--iface", default=None,
                      help="Local interface IP to join on (e.g. the doublezero1 address); "
                           "omit to join on INADDR_ANY")
+    ap.add_argument("--link", default=None,
+                     help="Interface NAME (e.g. doublezero1) to capture via AF_PACKET; "
+                          "required on the DZ tunnel, where a UDP multicast socket gets nothing")
     ap.add_argument("--minutes", type=float, default=None,
                      help="Stop after this many minutes; omit to run until interrupted")
     ap.add_argument("--out", default=None, help="Output frame-log path (required unless --selftest)")
@@ -185,7 +248,7 @@ def main() -> None:
 
     duration_s = args.minutes * 60 if args.minutes else None
     frame_count = capture(args.group, args.mktdata_port, args.refdata_port, args.iface,
-                          args.out, duration_s)
+                          args.out, duration_s, link_iface=args.link)
     _log.info("captured %d frames -> %s", frame_count, args.out)
 
 

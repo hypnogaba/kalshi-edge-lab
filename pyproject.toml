@@ -1,7 +1,7 @@
 [project]
 name = "kalshi-edge-lab"
 version = "0.0.1"
-description = "Edge Latency Lab — an independent latency benchmark for the DoubleZero Kalshi edge feed"
+description = "Decode and benchmark the DoubleZero edge multicast feed of Kalshi crypto perpetuals"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE"]

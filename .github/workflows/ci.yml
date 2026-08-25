@@ -28,3 +28,6 @@ jobs:
 
       - name: Test
         run: uv run pytest -q
+
+      - name: Selfcheck (offline race wiring)
+        run: uv run python -m scripts.run_race --selfcheck

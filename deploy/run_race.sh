@@ -6,10 +6,10 @@
 # then runs the race and tells you where the results landed.
 #
 # Usage (env vars):
-#   MARKET=KXBTC-25DEC31 GROUP=239.1.1.1 IFACE=eth0 bash deploy/run_race.sh
+#   MARKET=KXBTCPERP GROUP=233.84.178.3 IFACE=doublezero1 bash deploy/run_race.sh
 #
 # Or with flags:
-#   bash deploy/run_race.sh --market KXBTC-25DEC31 --group 239.1.1.1 --iface eth0
+#   bash deploy/run_race.sh --market KXBTCPERP --group 233.84.178.3 --iface doublezero1
 #
 # Config (env var or flag), with defaults:
 #   MARKET          --market          (required, no default)
@@ -90,7 +90,7 @@ if [ ${#missing[@]} -gt 0 ]; then
     done
     echo
     echo "      Example:"
-    echo "        MARKET=KXBTC-25DEC31 GROUP=239.1.1.1 IFACE=eth0 bash deploy/run_race.sh"
+    echo "        MARKET=KXBTCPERP GROUP=233.84.178.3 IFACE=doublezero1 bash deploy/run_race.sh"
     exit 1
 fi
 echo "      MARKET=$MARKET  GROUP=$GROUP  IFACE=$IFACE"
@@ -105,7 +105,7 @@ uv run python -m scripts.run_race \
     --group "$GROUP" \
     --mktdata-port "$MKTDATA_PORT" \
     --refdata-port "$REFDATA_PORT" \
-    --iface "$IFACE" \
+    --link "$IFACE" \
     --out-dir data/race
 
 # 5. Report location ----------------------------------------------------------
