@@ -248,7 +248,7 @@ def main() -> None:
     ap.add_argument("--refdata-port", type=int, default=41000)
     ap.add_argument("--out", default="data/dz_latency.json")
     ap.add_argument("--flush-ms", type=int, default=1000)
-    ap.add_argument("--window-min", type=float, default=360.0)
+    ap.add_argument("--window-min", type=float, default=1440.0)
     args = ap.parse_args()
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     try:

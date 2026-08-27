@@ -31,7 +31,7 @@ EnvironmentFile=-<REPO_PATH>/.env
 ExecStart=<REPO_PATH>/.venv/bin/python -m scripts.dz_latency_race \
     --link doublezero1 --group 233.84.178.3 \
     --mktdata-port 31000 --refdata-port 41000 \
-    --window-min 360 --out data/dz_latency.json
+    --window-min 1440 --flush-ms 5000 --out data/dz_latency.json
 AmbientCapabilities=CAP_NET_RAW
 Restart=on-failure
 RestartSec=5
