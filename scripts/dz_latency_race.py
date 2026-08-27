@@ -50,9 +50,17 @@ DZ_CONTRACT_SIZE = 0.0001
 _ETH_P_IP = 0x0800
 _KEY_TTL_NS = 30 * 1_000_000_000  # drop an unmatched half-trade after 30s
 
+# All Kalshi crypto perpetuals — race across every one, so the scoreboard stays
+# populated even when a single market (e.g. BTC) is quiet.
+PERP_TICKERS = [
+    "KXBTCPERP", "KXETHPERP", "KXSOLPERP", "KXXRPPERP", "KXBCHPERP", "KXDOGEPERP",
+    "KXHYPEPERP", "KXKSHIBPERP", "KXLINKPERP", "KXLTCPERP", "KXNEARPERP",
+    "KXSUIPERP", "KXZECPERP",
+]
 
-def _match_key(dollars: float, contracts: float, exch_ms: int) -> tuple:
-    return (exch_ms, round(dollars), round(contracts))
+
+def _match_key(market: str, dollars: float, contracts: float, exch_ms: int) -> tuple:
+    return (market, exch_ms, round(dollars), round(contracts))
 
 
 class RaceState:
@@ -134,7 +142,7 @@ class RaceState:
 
 
 def _dz_reader(state: RaceState, group: str, ports: set[int], link: str,
-               ticker: str, stop: threading.Event) -> None:
+               stop: threading.Event) -> None:
     group_bytes = bytes(int(x) for x in group.split("."))
     sock = socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(_ETH_P_IP))
     sock.bind((link, 0))
@@ -154,14 +162,16 @@ def _dz_reader(state: RaceState, group: str, ports: set[int], link: str,
                 continue
             t = now_ns()
             for e in decoder.decode(data[ihl + 8:], t):
-                if e.kind == Kind.TRADE and e.market == ticker and e.exch_ts_ns:
-                    key = _match_key(e.price, e.size / DZ_CONTRACT_SIZE, e.exch_ts_ns // 1_000_000)
+                if (e.kind == Kind.TRADE and e.exch_ts_ns
+                        and isinstance(e.market, str) and e.market.endswith("PERP")):
+                    key = _match_key(e.market, e.price, e.size / DZ_CONTRACT_SIZE,
+                                     e.exch_ts_ns // 1_000_000)
                     state.add_dz(key, t)
     finally:
         sock.close()
 
 
-async def _public_ws(state: RaceState, ticker: str) -> None:
+async def _public_ws(state: RaceState) -> None:
     cfg = kalshi_prod()
     signer = KalshiSigner(cfg.key_id, cfg.private_key_path)
 
@@ -177,12 +187,12 @@ async def _public_ws(state: RaceState, ticker: str) -> None:
         if m.get("type") != "trade":
             return
         msg = m["msg"]
-        key = _match_key(float(msg["price"]) * PUBLIC_PRICE_TO_DOLLARS,
+        key = _match_key(msg["market_ticker"], float(msg["price"]) * PUBLIC_PRICE_TO_DOLLARS,
                          float(msg["count"]), int(msg["ts_ms"]))
         state.add_pub(key, t)
 
     sub = [{"id": 1, "cmd": "subscribe",
-            "params": {"channels": ["trade"], "market_ticker": ticker}}]
+            "params": {"channels": ["trade"], "market_tickers": PERP_TICKERS}}]
     client = ReconnectingWS(MARGIN_WS_URL, headers, on_message, subscribe_msgs=sub)
     await client.run()
 
@@ -205,23 +215,23 @@ async def _flush_loop(state: RaceState, out_path: str, flush_ms: int,
 async def _main(args: argparse.Namespace) -> None:
     state = RaceState(args.window_min)
     meta = {
-        "ticker": args.ticker,
+        "ticker": "all perps",
+        "markets": len(PERP_TICKERS),
         "dz_group": args.group,
         "public_ws": "external-api-margin-ws.kalshi.com",
-        "method": "one host, one clock; match by exch-ts+price+count; delta=dz-public",
+        "method": "one host, one clock; match by exch-ts+price+size; delta=dz-public",
     }
     stop = threading.Event()
     reader = threading.Thread(
         target=_dz_reader,
-        args=(state, args.group, {args.mktdata_port, args.refdata_port}, args.link,
-              args.ticker, stop),
+        args=(state, args.group, {args.mktdata_port, args.refdata_port}, args.link, stop),
         daemon=True,
     )
     reader.start()
-    _log.info("latency race: %s DZ %s vs public margin WS", args.ticker, args.group)
+    _log.info("latency race: all Kalshi perps, DZ %s vs public margin WS", args.group)
     try:
         await asyncio.gather(
-            _public_ws(state, args.ticker),
+            _public_ws(state),
             _flush_loop(state, args.out, args.flush_ms, args.window_min, meta),
         )
     finally:
@@ -232,14 +242,13 @@ async def _main(args: argparse.Namespace) -> None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--ticker", default="KXBTCPERP")
     ap.add_argument("--link", default="doublezero1")
     ap.add_argument("--group", default="233.84.178.3")
     ap.add_argument("--mktdata-port", type=int, default=31000)
     ap.add_argument("--refdata-port", type=int, default=41000)
     ap.add_argument("--out", default="data/dz_latency.json")
     ap.add_argument("--flush-ms", type=int, default=1000)
-    ap.add_argument("--window-min", type=float, default=30.0)
+    ap.add_argument("--window-min", type=float, default=360.0)
     args = ap.parse_args()
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     try:

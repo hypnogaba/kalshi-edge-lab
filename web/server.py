@@ -359,7 +359,9 @@ _PAGE_HTML = """<!doctype html>
     gauge.style.setProperty('--pct', String(Math.max(0, Math.min(100, L.win_rate))));
     wr.textContent = L.win_rate.toFixed(0) + '%';
     p50.textContent = soonerTxt(L.p50_ms);
-    statrow.textContent = 'matched ' + L.n + ' trades · ' + (L.window_min || 30) + '-min window';
+    var wm = L.window_min || 30;
+    var win = wm >= 60 ? (wm / 60) + 'h' : wm + '-min';
+    statrow.textContent = 'matched ' + L.n + ' trades · ' + win + ' window';
     note.textContent = 'DoubleZero arrives first on ' + L.win_rate.toFixed(0) +
       '% of matched trades — one host, one monotonic clock, no cross-machine skew.';
   }
