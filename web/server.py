@@ -194,18 +194,22 @@ _PAGE_HTML = """<!doctype html>
   .vs-k{font-size:13.5px; color:var(--muted)}
   .vs-v{font-family:"IBM Plex Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums;
     font-size:19px; color:var(--muted)}
-  .caveat{margin:16px 0 0; padding:12px 14px; background:var(--panel-2);
-    border-radius:8px; font-size:12.5px; line-height:1.6; color:var(--muted)}
-  .caveat b{color:var(--fg); font-weight:600}
-  /* What the measurement actually is, so the numbers can be checked. */
-  .setup{display:grid; grid-template-columns:170px 1fr; gap:9px 20px;
-    margin:18px 0 0; padding:14px 16px; border:1px solid var(--line); border-radius:10px;
-    font-size:13px; line-height:1.6}
-  .setup dt{color:var(--faint); font-size:11.5px; letter-spacing:.03em;
+  .setting{margin-top:-4px}
+  /* The method is kept out of the way but one click from anyone checking it. */
+  .method{margin:18px 0 0; border-top:1px solid var(--line); padding-top:14px}
+  .method summary{cursor:pointer; color:var(--faint); font-size:12.5px;
+    letter-spacing:.02em; list-style:none; user-select:none; width:fit-content}
+  .method summary::-webkit-details-marker{display:none}
+  .method summary::before{content:"+ "; font-family:"IBM Plex Mono",monospace}
+  .method[open] summary::before{content:"– "}
+  .method summary:hover{color:var(--fg)}
+  .setup{display:grid; grid-template-columns:140px 1fr; gap:9px 20px;
+    margin:14px 0 0; font-size:12.5px; line-height:1.6}
+  .setup dt{color:var(--faint); font-size:11px; letter-spacing:.03em;
     text-transform:uppercase; font-weight:600; padding-top:1px}
   .setup dd{margin:0; color:var(--muted)}
   .setup dd b{color:var(--fg); font-weight:600}
-  .setup .mono{font-size:12px}
+  .setup .mono{font-size:11.5px}
   @media (max-width:640px){ .setup{grid-template-columns:1fr; gap:2px 0}
     .setup dd{margin:0 0 10px} }
   header.bar{position:sticky; top:0; z-index:20; backdrop-filter:blur(10px);
@@ -317,18 +321,7 @@ _PAGE_HTML = """<!doctype html>
     </div>
     <p class="explainer">The panel above says how much <i>sooner</i> DoubleZero is. This one says how long the trip takes. Every Kalshi trade carries the exchange&rsquo;s own execution timestamp, so the clock starts at the venue rather than at our door.</p>
 
-    <dl class="setup">
-      <dt>Where this runs</dt>
-      <dd>One Contabo VPS in Europe. It reaches the DoubleZero edge in <b>2.9 ms</b> round trip and Kalshi&rsquo;s public API in <b>106 ms</b> round trip, so the exchange is an ocean away and DoubleZero&rsquo;s entry point is next door.</dd>
-      <dt>The DoubleZero side</dt>
-      <dd>Multicast group <span class="mono">233.84.178.3</span>, Top-of-Book &amp; Trades, taken off the <span class="mono">doublezero1</span> tunnel with AF_PACKET. DoubleZero reports the edge device as <span class="mono">fr2-dzx-001</span>, metro Frankfurt; the tunnel peer resolves to Frankfurt am Main.</dd>
-      <dt>The public side</dt>
-      <dd>Kalshi&rsquo;s own perpetuals WebSocket, <span class="mono">external-api-margin-ws.kalshi.com</span>, which anyone can connect to. It resolves into <b>AWS us-east-2 (Ohio)</b>.</dd>
-      <dt>What counts as arrival</dt>
-      <dd>The kernel&rsquo;s own <span class="mono">SO_TIMESTAMPNS</span> stamp, taken as the packet lands on the interface &mdash; not a clock read after our code wakes up.</dd>
-      <dt>Which trades</dt>
-      <dd>Only trades seen on <i>both</i> feeds, joined on the venue timestamp, price and size, so the two columns describe the same prints and not two different samples.</dd>
-    </dl>
+    <p class="explainer setting">One server in Europe, listening at DoubleZero&rsquo;s Frankfurt edge. Kalshi sits in AWS us-east-2, an ocean away &mdash; <b>106 ms</b> round trip from here, against <b>2.9 ms</b> to the DoubleZero edge.</p>
 
     <div class="chain" id="abs-chain" style="display:none">
       <div class="chain-node">
@@ -363,7 +356,21 @@ _PAGE_HTML = """<!doctype html>
         <span class="vs-k">Fibre floor for a US-East &rarr; Frankfurt hop, for scale</span>
         <span class="vs-v">~43&ndash;47 ms</span>
       </div>
-      <p class="caveat" id="abs-caveat"></p>
+      <details class="method">
+        <summary>How this is measured</summary>
+        <dl class="setup">
+          <dt>The DoubleZero side</dt>
+          <dd>Multicast group <span class="mono">233.84.178.3</span>, Top-of-Book &amp; Trades, taken off the <span class="mono">doublezero1</span> tunnel with AF_PACKET. DoubleZero reports the edge device as <span class="mono">fr2-dzx-001</span>, metro Frankfurt; the tunnel peer resolves to Frankfurt am Main.</dd>
+          <dt>The public side</dt>
+          <dd>Kalshi&rsquo;s own perpetuals WebSocket, <span class="mono">external-api-margin-ws.kalshi.com</span>, which anyone can connect to.</dd>
+          <dt>Arrival</dt>
+          <dd>The kernel&rsquo;s <span class="mono">SO_TIMESTAMPNS</span> stamp, taken as the packet lands on the interface, not a clock read after our code wakes up.</dd>
+          <dt>Sample</dt>
+          <dd>Only trades seen on <i>both</i> feeds, joined on the venue timestamp, price and size, so the two rows describe the same prints.</dd>
+          <dt>Limits</dt>
+          <dd id="abs-caveat"></dd>
+        </dl>
+      </details>
     </div>
     <p class="explainer" id="abs-waiting">Measuring&hellip; the first matched trades are still coming in.</p>
   </section>
@@ -502,23 +509,18 @@ _PAGE_HTML = """<!doctype html>
     // two feeds are not stamped at the same depth. Both are stated, not hidden.
     var c = A.clock;
     var clockTxt = c
-      ? 'Our clock is disciplined by ' + c.source + ' at stratum ' + c.stratum +
-        ' and is currently <b>' + Math.abs(c.offset_ms).toFixed(2) + ' ms</b> from true time, ' +
-        'worst case ' + c.error_ms.toFixed(1) + ' ms.'
-      : 'Our clock offset could not be read just now, so treat these totals as indicative.';
+      ? 'our clock is <b>' + Math.abs(c.offset_ms).toFixed(2) + ' ms</b> off true time (' +
+        c.source + ', stratum ' + c.stratum + ', worst case ' + c.error_ms.toFixed(1) + ' ms)'
+      : 'our clock offset could not be read just now';
+    var lead = (typeof L.p50_ms === 'number') ? Math.abs(L.p50_ms).toFixed(1) + ' ms' : '—';
     document.getElementById('abs-caveat').innerHTML =
-      '<b>What these numbers do and do not prove.</b> ' +
-      'The total rests on two clocks only: Kalshi&rsquo;s and ours. ' + clockTxt +
-      ' The split into two legs additionally trusts the publisher&rsquo;s clock, which we cannot check' +
-      ' &mdash; a skew there would move time between the two legs while leaving the total untouched,' +
-      ' so read the total as the measurement and the split as DoubleZero&rsquo;s own account of it.' +
-      ' Kalshi stamps at millisecond resolution, which pushes every total <b>up</b> by under 1 ms, never down.' +
-      ' The two feeds are also not stamped at the same depth: DoubleZero arrives as raw multicast and is' +
-      ' stamped by the kernel, while a WebSocket message only exists after TLS and JSON decoding, which' +
-      ' flatters DoubleZero here by a few tenths of a millisecond. The head-to-head race above stamps both' +
-      ' sides identically and puts the lead at ' +
-      (typeof L.p50_ms === 'number' ? Math.abs(L.p50_ms).toFixed(1) + ' ms' : '&mdash;') +
-      ' &mdash; that is the more conservative figure of the two.';
+      'The total rests on two clocks, Kalshi&rsquo;s and ours &mdash; ' + clockTxt + '. ' +
+      'Splitting it into legs also trusts the publisher&rsquo;s clock, which we cannot check, ' +
+      'so the total is the measurement and the split is DoubleZero&rsquo;s account of it. ' +
+      'Kalshi stamps in whole milliseconds, so totals are up to 1 ms high, never low. ' +
+      'DoubleZero is stamped by the kernel while a WebSocket message only exists after decoding, ' +
+      'which flatters DoubleZero by a few tenths; the head-to-head race above stamps both sides ' +
+      'the same way and puts the lead at ' + lead + '.';
   }
 
   function renderWinStrip(state){
