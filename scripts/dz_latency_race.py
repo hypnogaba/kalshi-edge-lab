@@ -27,7 +27,7 @@ import os
 import socket
 import threading
 import time
-from collections import deque
+from collections import Counter, deque
 
 import orjson
 
@@ -35,6 +35,7 @@ from common.clock import now_ns
 from common.config import kalshi_prod
 from common.event import Kind
 from common.ws_client import ReconnectingWS
+from sources.dz_feed.contract_sizes import ContractSizes
 from sources.dz_feed.decoder import DzDecoder
 from sources.kalshi_ws.auth import KalshiSigner
 
@@ -42,11 +43,17 @@ _log = logging.getLogger(__name__)
 
 MARGIN_WS_URL = "wss://external-api-margin-ws.kalshi.com/trade-api/ws/v2/margin"
 MARGIN_WS_PATH = "/trade-api/ws/v2/margin"
-# Public "price" is dollars/1e4 and "count" is contracts; the DZ feed gives price
-# in dollars and size in the underlying (contracts * contract_size). These bring
-# both onto the same (dollars, contracts) axes used in the match key.
-PUBLIC_PRICE_TO_DOLLARS = 10_000.0
-DZ_CONTRACT_SIZE = 0.0001
+# The two feeds report the same trade on different axes: the public side quotes
+# dollars per CONTRACT and counts contracts, the DZ side quotes dollars per unit
+# of underlying and sizes in the underlying. Both are converted with that
+# market's own contract size, which the DZ feed publishes as lot_size -- see
+# sources/dz_feed/contract_sizes.py.
+#
+# This used to be a flat 1e4 / 1e-4 on both sides. That is right for KXBTCPERP
+# alone, whose contract happens to be 1e-4: on KXETHPERP (contract 1e-3) the
+# same $2,393.8 trade keyed as $23,938 on one side and $2,394 on the other, so
+# it never matched. The race was reporting "all Kalshi crypto perpetuals" while
+# in practice matching BTC only.
 _ETH_P_IP = 0x0800
 _KEY_TTL_NS = 30 * 1_000_000_000  # drop an unmatched half-trade after 30s
 
@@ -75,17 +82,20 @@ class RaceState:
         self.dz_seen = 0
         self.pub_seen = 0
         self.matched = 0
+        # Matches per market, so "all perps" can be checked rather than claimed.
+        self.matched_by_market: Counter[str] = Counter()
 
-    def _record(self, dz_arr: int, pub_arr: int) -> None:
+    def _record(self, key: tuple, dz_arr: int, pub_arr: int) -> None:
         self._deltas.append((now_ns(), (dz_arr - pub_arr) / 1e6))
         self.matched += 1
+        self.matched_by_market[key[0]] += 1
 
     def add_dz(self, key: tuple, arrival_ns: int) -> None:
         with self._lock:
             self.dz_seen += 1
             other = self._pub.pop(key, None)
             if other is not None:
-                self._record(arrival_ns, other[0])
+                self._record(key, arrival_ns, other[0])
             else:
                 self._dz[key] = (arrival_ns, now_ns())
 
@@ -94,7 +104,7 @@ class RaceState:
             self.pub_seen += 1
             other = self._dz.pop(key, None)
             if other is not None:
-                self._record(other[0], arrival_ns)
+                self._record(key, other[0], arrival_ns)
             else:
                 self._pub[key] = (arrival_ns, now_ns())
 
@@ -120,6 +130,8 @@ class RaceState:
                 "dz_seen": self.dz_seen,
                 "pub_seen": self.pub_seen,
                 "matched_total": self.matched,
+                "matched_markets": len(self.matched_by_market),
+                "matched_by_market": dict(self.matched_by_market.most_common(20)),
             }
             if n:
                 def pct(p: float) -> float:
@@ -142,7 +154,7 @@ class RaceState:
 
 
 def _dz_reader(state: RaceState, group: str, ports: set[int], link: str,
-               stop: threading.Event) -> None:
+               sizes: ContractSizes, stop: threading.Event) -> None:
     group_bytes = bytes(int(x) for x in group.split("."))
     sock = socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(_ETH_P_IP))
     sock.bind((link, 0))
@@ -162,16 +174,20 @@ def _dz_reader(state: RaceState, group: str, ports: set[int], link: str,
                 continue
             t = now_ns()
             for e in decoder.decode(data[ihl + 8:], t):
-                if (e.kind == Kind.TRADE and e.exch_ts_ns
+                if not (e.kind == Kind.TRADE and e.exch_ts_ns and e.size is not None
                         and isinstance(e.market, str) and e.market.endswith("PERP")):
-                    key = _match_key(e.market, e.price, e.size / DZ_CONTRACT_SIZE,
-                                     e.exch_ts_ns // 1_000_000)
-                    state.add_dz(key, t)
+                    continue
+                contract_size = sizes.learn_from(decoder.registry, e.market)
+                if contract_size is None:
+                    continue  # reference data has not arrived for this market yet
+                key = _match_key(e.market, e.price, e.size / contract_size,
+                                 e.exch_ts_ns // 1_000_000)
+                state.add_dz(key, t)
     finally:
         sock.close()
 
 
-async def _public_ws(state: RaceState) -> None:
+async def _public_ws(state: RaceState, sizes: ContractSizes) -> None:
     cfg = kalshi_prod()
     signer = KalshiSigner(cfg.key_id, cfg.private_key_path)
 
@@ -187,7 +203,10 @@ async def _public_ws(state: RaceState) -> None:
         if m.get("type") != "trade":
             return
         msg = m["msg"]
-        key = _match_key(msg["market_ticker"], float(msg["price"]) * PUBLIC_PRICE_TO_DOLLARS,
+        contract_size = sizes.get(msg["market_ticker"])
+        if contract_size is None:
+            return  # not yet on a common axis with the DZ side; it could not match
+        key = _match_key(msg["market_ticker"], float(msg["price"]) / contract_size,
                          float(msg["count"]), int(msg["ts_ms"]))
         state.add_pub(key, t)
 
@@ -221,17 +240,19 @@ async def _main(args: argparse.Namespace) -> None:
         "public_ws": "external-api-margin-ws.kalshi.com",
         "method": "one host, one clock; match by exch-ts+price+size; delta=dz-public",
     }
+    sizes = ContractSizes()
     stop = threading.Event()
     reader = threading.Thread(
         target=_dz_reader,
-        args=(state, args.group, {args.mktdata_port, args.refdata_port}, args.link, stop),
+        args=(state, args.group, {args.mktdata_port, args.refdata_port}, args.link,
+              sizes, stop),
         daemon=True,
     )
     reader.start()
     _log.info("latency race: all Kalshi perps, DZ %s vs public margin WS", args.group)
     try:
         await asyncio.gather(
-            _public_ws(state),
+            _public_ws(state, sizes),
             _flush_loop(state, args.out, args.flush_ms, args.window_min, meta),
         )
     finally:
