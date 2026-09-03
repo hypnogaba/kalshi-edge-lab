@@ -47,19 +47,21 @@ def _quote(instr_id: int, bid_price_raw: int, bid_qty_raw: int,
 
 
 def _trade(instr_id: int, aggressor: int, price_raw: int, qty_raw: int,
-           trade_id: int, source_id: int = 1) -> bytes:
+           trade_id: int, source_id: int = 1, source_ts_ns: int = 0) -> bytes:
     body = struct.pack(
         "<IHBBQqQQQ",
-        instr_id, source_id, aggressor, 0, 0,
+        instr_id, source_id, aggressor, 0, source_ts_ns,
         price_raw, qty_raw, trade_id, 0,
     )
     return _msg_header(0x04, 52) + body
 
 
-def _frame(messages: list[bytes], seq: int = 1, channel_id: int = 1) -> bytes:
+def _frame(messages: list[bytes], seq: int = 1, channel_id: int = 1,
+           send_ts_ns: int = 0) -> bytes:
     body = b"".join(messages)
     header = _FRAME_HEADER.pack(
-        _MAGIC, _SCHEMA_VER, channel_id, seq, 0, len(messages), 0, 24 + len(body))
+        _MAGIC, _SCHEMA_VER, channel_id, seq, send_ts_ns, len(messages), 0,
+        24 + len(body))
     return header + body
 
 
@@ -200,3 +202,46 @@ def test_short_random_buffer_with_valid_magic_returns_empty():
     raw = struct.pack("<H", _MAGIC) + b"\x01\x02\x03\x04\x05"
 
     assert decoder.decode(raw, t_arrival_ns=0) == []
+
+
+def test_trade_carries_both_venue_and_publisher_timestamps():
+    """The two stamps that make an ABSOLUTE latency measurable.
+
+    `exch_ts_ns` is the venue's own execution time (Trade body). `pub_ts_ns` is
+    when DoubleZero put the frame on the wire (frame header). Their difference
+    is the "exchange -> DZ took it in" leg; arrival minus `pub_ts_ns` is the
+    "DZ carried it to us" leg. The decoder used to read the frame's send
+    timestamp and throw it away, which left only the relative race measurable.
+    """
+    decoder = DzDecoder()
+    exch_ts = 1_788_459_086_469_000_000
+    send_ts = 1_788_459_086_487_557_174
+    frame = _frame([
+        _instrument_definition(3, 1, "SOL", price_exp=-2, qty_exp=-2),
+        _trade(3, 1, price_raw=10_462, qty_raw=50, trade_id=99,
+               source_ts_ns=exch_ts),
+    ], send_ts_ns=send_ts)
+
+    trade = decoder.decode(frame, t_arrival_ns=555)[0]
+
+    assert trade.exch_ts_ns == exch_ts
+    assert trade.pub_ts_ns == send_ts
+    # 18.557 ms between the venue stamping the print and DZ sending the frame.
+    assert (trade.pub_ts_ns - trade.exch_ts_ns) / 1e6 == 18.557174
+
+
+def test_trade_publisher_timestamp_is_none_when_frame_carries_none():
+    """A zero send timestamp means "not supplied", not "sent at the epoch".
+
+    Without this, a feed that leaves the field empty would report an absolute
+    latency of 56 years instead of declining to answer.
+    """
+    decoder = DzDecoder()
+    frame = _frame([
+        _instrument_definition(3, 1, "SOL", price_exp=-2, qty_exp=-2),
+        _trade(3, 1, price_raw=10_462, qty_raw=50, trade_id=99),
+    ], send_ts_ns=0)
+
+    trade = decoder.decode(frame, t_arrival_ns=555)[0]
+
+    assert trade.pub_ts_ns is None

@@ -171,6 +171,32 @@ _PAGE_HTML = """<!doctype html>
   .ws-legend{display:flex; gap:16px; margin:8px 0 0; font-family:"IBM Plex Mono"; font-size:11px; color:var(--faint)}
   .ws-dot{display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:6px; vertical-align:middle}
   .mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace; font-variant-numeric:tabular-nums}
+  /* Absolute-latency chain: each hop a trade makes, top to bottom. */
+  .chain{margin:18px 0 0; border-left:2px solid var(--line); padding-left:0}
+  .chain-node{position:relative; padding:0 0 0 22px; margin-left:-1px}
+  .chain-node::before{content:""; position:absolute; left:-7px; top:6px;
+    width:12px; height:12px; border-radius:50%; background:var(--panel);
+    border:2px solid var(--faint)}
+  .chain-node.is-end::before{background:var(--accent); border-color:var(--accent)}
+  .chain-name{font-weight:600; font-size:15px; line-height:1.3}
+  .chain-where{color:var(--faint); font-size:12.5px; margin-top:1px}
+  .chain-hop{display:flex; align-items:baseline; gap:12px; padding:12px 0 12px 22px;
+    margin-left:-1px; color:var(--muted); font-size:13.5px}
+  .chain-ms{font-family:"IBM Plex Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums;
+    font-size:19px; font-weight:600; color:var(--fg); min-width:86px; letter-spacing:-.01em}
+  .chain-total{display:flex; align-items:baseline; justify-content:space-between;
+    gap:14px; flex-wrap:wrap; margin-top:18px; padding-top:16px; border-top:1px solid var(--line)}
+  .chain-total-k{font-size:13.5px; color:var(--muted)}
+  .chain-total-v{font-family:"IBM Plex Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums;
+    font-size:30px; font-weight:700; letter-spacing:-.02em}
+  .vs-row{display:flex; align-items:baseline; justify-content:space-between; gap:14px;
+    flex-wrap:wrap; margin-top:10px}
+  .vs-k{font-size:13.5px; color:var(--muted)}
+  .vs-v{font-family:"IBM Plex Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums;
+    font-size:19px; color:var(--muted)}
+  .caveat{margin:16px 0 0; padding:12px 14px; background:var(--panel-2);
+    border-radius:8px; font-size:12.5px; line-height:1.6; color:var(--muted)}
+  .caveat b{color:var(--fg); font-weight:600}
   header.bar{position:sticky; top:0; z-index:20; backdrop-filter:blur(10px);
     background:color-mix(in srgb, var(--ink) 88%, transparent); border-bottom:1px solid var(--line)}
   .bar-in{display:flex; align-items:center; gap:14px; height:64px; flex-wrap:wrap}
@@ -272,6 +298,49 @@ _PAGE_HTML = """<!doctype html>
         <span id="ws-count"></span>
       </div>
     </div>
+  </section>
+
+  <section class="panel" aria-labelledby="abs-title">
+    <div class="phead">
+      <h2 id="abs-title">How long DoubleZero actually takes</h2>
+    </div>
+    <p class="explainer">The panel above says how much <i>sooner</i> DoubleZero is. This one says how long the whole trip takes. Every Kalshi trade carries the exchange&rsquo;s own execution timestamp, and every DoubleZero frame carries the time the publisher put it on the wire &mdash; so the journey can be split into its two legs and measured end to end, rather than only against the other feed.</p>
+    <div class="chain" id="abs-chain" style="display:none">
+      <div class="chain-node">
+        <div class="chain-name">Kalshi matching engine</div>
+        <div class="chain-where">the exchange stamps the trade &middot; AWS us-east-2, Ohio</div>
+      </div>
+      <div class="chain-hop">
+        <span class="chain-ms" id="abs-leg1">&mdash;</span>
+        <span>DoubleZero picks the trade up at the source</span>
+      </div>
+      <div class="chain-node">
+        <div class="chain-name">DoubleZero publisher</div>
+        <div class="chain-where">stamps the frame and multicasts it</div>
+      </div>
+      <div class="chain-hop">
+        <span class="chain-ms" id="abs-leg2">&mdash;</span>
+        <span>carried across the Atlantic over DoubleZero</span>
+      </div>
+      <div class="chain-node is-end">
+        <div class="chain-name">This server</div>
+        <div class="chain-where">kernel timestamps the packet &middot; Frankfurt</div>
+      </div>
+      <div class="chain-total">
+        <span class="chain-total-k">Exchange stamp &rarr; here, over DoubleZero <span class="mono" id="abs-n" style="color:var(--faint)"></span></span>
+        <span class="chain-total-v" id="abs-total">&mdash;</span>
+      </div>
+      <div class="vs-row">
+        <span class="vs-k">The same trades over Kalshi&rsquo;s public WebSocket</span>
+        <span class="vs-v" id="abs-public">&mdash;</span>
+      </div>
+      <div class="vs-row">
+        <span class="vs-k">Speed of light in fibre, Ohio &rarr; Frankfurt, for reference</span>
+        <span class="vs-v">~43&ndash;47 ms</span>
+      </div>
+      <p class="caveat" id="abs-caveat"></p>
+    </div>
+    <p class="explainer" id="abs-waiting">Measuring&hellip; the first matched trades are still coming in.</p>
   </section>
 
   <section class="panel" aria-labelledby="feed-title">
@@ -383,6 +452,43 @@ _PAGE_HTML = """<!doctype html>
       '% of matched trades — one host, one monotonic clock, no cross-machine skew.';
   }
 
+  function ms(v){ return (typeof v === 'number') ? v.toFixed(1) + ' ms' : '—'; }
+
+  function renderAbsolute(state){
+    var L = state && state.latency;
+    var A = L && L.absolute;
+    var chain = document.getElementById('abs-chain');
+    var waiting = document.getElementById('abs-waiting');
+    var ok = !!(A && A.dz_total && A.public_total && A.n > 0);
+    if(!ok){ chain.style.display = 'none'; waiting.style.display = ''; return; }
+    chain.style.display = ''; waiting.style.display = 'none';
+
+    var leg1 = A.exch_to_pub, leg2 = A.dz_transport;
+    document.getElementById('abs-leg1').textContent = leg1 ? ms(leg1.p50_ms) : '—';
+    document.getElementById('abs-leg2').textContent = leg2 ? ms(leg2.p50_ms) : '—';
+    document.getElementById('abs-total').textContent = ms(A.dz_total.p50_ms);
+    document.getElementById('abs-n').textContent = '· median of ' + A.n + ' matched trades';
+
+    var lead = A.public_total.p50_ms - A.dz_total.p50_ms;
+    document.getElementById('abs-public').textContent =
+      ms(A.public_total.p50_ms) + '  (' + (lead >= 0 ? '+' : '') + lead.toFixed(1) + ' ms)';
+
+    // The number is only as good as the clock it was measured against, and the
+    // two feeds are not stamped at the same depth. Both are stated, not hidden.
+    var c = A.clock;
+    var clockTxt = c
+      ? 'This host&rsquo;s clock is disciplined by ' + c.source + ' at stratum ' + c.stratum +
+        ', currently <b>' + Math.abs(c.offset_ms).toFixed(2) + ' ms</b> from true time ' +
+        '(worst-case bound ' + c.error_ms.toFixed(1) + ' ms).'
+      : 'This host&rsquo;s clock offset could not be read, so treat the absolute figures as indicative.';
+    document.getElementById('abs-caveat').innerHTML =
+      clockTxt +
+      ' Exchange timestamps arrive at millisecond resolution, which pushes every total <b>up</b> by under 1 ms, never down.' +
+      ' The DoubleZero side is stamped by the kernel as the packet lands; the public WebSocket side can only be stamped after TLS and JSON decoding, which flatters DoubleZero by a few tenths of a millisecond &mdash; the independent head-to-head race above, where both sides are stamped the same way, puts the lead at ' +
+      (typeof L.p50_ms === 'number' ? Math.abs(L.p50_ms).toFixed(1) + ' ms' : '—') + '.' +
+      ' The split into two legs relies on the publisher&rsquo;s own clock; the total does not.';
+  }
+
   function renderWinStrip(state){
     var L = state && state.latency;
     var wrap = document.getElementById('winstrip-wrap');
@@ -444,6 +550,7 @@ _PAGE_HTML = """<!doctype html>
     lastState = state;
     renderDzPill(state);
     renderScore(state);
+    renderAbsolute(state);
     renderWinStrip(state);
     renderLiveFeed(state);
     renderUpdated();

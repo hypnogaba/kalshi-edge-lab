@@ -62,7 +62,7 @@ class DzDecoder:
     def decode(self, raw: bytes, t_arrival_ns: int) -> list[Event]:
         if len(raw) < _FRAME_HEADER.size:
             return []
-        (magic, schema_ver, _channel_id, seq, _send_ts_ns, msg_count,
+        (magic, schema_ver, _channel_id, seq, send_ts_ns, msg_count,
          _reset_count, _frame_length) = _FRAME_HEADER.unpack_from(raw, 0)
         if magic != _MAGIC or schema_ver != _SCHEMA_VER:
             return []
@@ -90,7 +90,8 @@ class DzDecoder:
                 elif msg_type == 0x03:
                     events.extend(self._decode_quote(raw, offset, t_arrival_ns, seq))
                 elif msg_type == 0x04:
-                    events.append(self._decode_trade(raw, offset, t_arrival_ns))
+                    events.append(self._decode_trade(raw, offset, t_arrival_ns,
+                                                     send_ts_ns))
                 # 0x01 Heartbeat, 0x06 EndOfSession, and unknown types carry no event.
             except struct.error:
                 # Belt-and-suspenders: never let a malformed body escape decode().
@@ -130,7 +131,8 @@ class DzDecoder:
                   size=ask_qty_raw * 10**qty_exp, seq=frame_seq),
         ]
 
-    def _decode_trade(self, raw: bytes, offset: int, t_arrival_ns: int) -> Event:
+    def _decode_trade(self, raw: bytes, offset: int, t_arrival_ns: int,
+                       send_ts_ns: int = 0) -> Event:
         (instr_id, _source_id, aggressor_side, _trade_flags, source_ts_ns, price_raw,
          qty_raw, trade_id, _cum_volume) = _TRADE_BODY.unpack_from(
             raw, offset + _MSG_HEADER.size)
@@ -139,7 +141,8 @@ class DzDecoder:
         return Event(source=Source.DZ_FEED, t_arrival_ns=t_arrival_ns, market=market,
                      kind=Kind.TRADE, side=side, price=price_raw * 10**price_exp,
                      size=qty_raw * 10**qty_exp, seq=trade_id,
-                     exch_ts_ns=source_ts_ns)
+                     exch_ts_ns=source_ts_ns,
+                     pub_ts_ns=send_ts_ns or None)
 
 
 _default_decoder = DzDecoder()

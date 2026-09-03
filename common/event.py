@@ -40,3 +40,9 @@ class Event:
     # carries one. Same trade on two feeds shares this, so it is the join key for
     # the latency race (arrival times differ; the exchange timestamp does not).
     exch_ts_ns: int | None = None
+    # Send timestamp from the DZ frame header: when the DoubleZero publisher put
+    # this frame on the wire. Splits the end-to-end time into "exchange -> DZ
+    # took it in" and "DZ carried it to us". Stamped by the publisher's clock,
+    # not ours, so the split is softer evidence than the total, which only
+    # involves the venue's clock and our own.
+    pub_ts_ns: int | None = None
