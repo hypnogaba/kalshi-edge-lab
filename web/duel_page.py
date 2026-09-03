@@ -174,7 +174,9 @@ async function tick(){
   const h = s.head_to_head;
   $("live").textContent = "live"; $("live").className = "pill on";
   $("mode").textContent = s.mode || "paper";
-  $("market").textContent = (s.markets || []).join(" · ") || "waiting";
+  const markets = s.markets || [];
+  $("market").textContent = markets.length ? markets.length + " crypto perps" : "waiting";
+  $("market").title = markets.join(" · ");
   $("dzRate").textContent = pct(h.dz_fill_rate);
   $("pubRate").textContent = pct(h.public_fill_rate);
   $("lead").textContent = h.median_lead_ms === null ? "\u2026"
