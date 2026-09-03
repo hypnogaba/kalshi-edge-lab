@@ -197,6 +197,17 @@ _PAGE_HTML = """<!doctype html>
   .caveat{margin:16px 0 0; padding:12px 14px; background:var(--panel-2);
     border-radius:8px; font-size:12.5px; line-height:1.6; color:var(--muted)}
   .caveat b{color:var(--fg); font-weight:600}
+  /* What the measurement actually is, so the numbers can be checked. */
+  .setup{display:grid; grid-template-columns:170px 1fr; gap:9px 20px;
+    margin:18px 0 0; padding:14px 16px; border:1px solid var(--line); border-radius:10px;
+    font-size:13px; line-height:1.6}
+  .setup dt{color:var(--faint); font-size:11.5px; letter-spacing:.03em;
+    text-transform:uppercase; font-weight:600; padding-top:1px}
+  .setup dd{margin:0; color:var(--muted)}
+  .setup dd b{color:var(--fg); font-weight:600}
+  .setup .mono{font-size:12px}
+  @media (max-width:640px){ .setup{grid-template-columns:1fr; gap:2px 0}
+    .setup dd{margin:0 0 10px} }
   header.bar{position:sticky; top:0; z-index:20; backdrop-filter:blur(10px);
     background:color-mix(in srgb, var(--ink) 88%, transparent); border-bottom:1px solid var(--line)}
   .bar-in{display:flex; align-items:center; gap:14px; height:64px; flex-wrap:wrap}
@@ -304,30 +315,44 @@ _PAGE_HTML = """<!doctype html>
     <div class="phead">
       <h2 id="abs-title">How long DoubleZero actually takes</h2>
     </div>
-    <p class="explainer">The panel above says how much <i>sooner</i> DoubleZero is. This one says how long the whole trip takes. Every Kalshi trade carries the exchange&rsquo;s own execution timestamp, and every DoubleZero frame carries the time the publisher put it on the wire &mdash; so the journey can be split into its two legs and measured end to end, rather than only against the other feed.</p>
+    <p class="explainer">The panel above says how much <i>sooner</i> DoubleZero is. This one says how long the trip takes. Every Kalshi trade carries the exchange&rsquo;s own execution timestamp, so the clock starts at the venue rather than at our door.</p>
+
+    <dl class="setup">
+      <dt>Where this runs</dt>
+      <dd>One Contabo VPS in Europe. It reaches the DoubleZero edge in <b>2.9 ms</b> round trip and Kalshi&rsquo;s public API in <b>106 ms</b> round trip, so the exchange is an ocean away and DoubleZero&rsquo;s entry point is next door.</dd>
+      <dt>The DoubleZero side</dt>
+      <dd>Multicast group <span class="mono">233.84.178.3</span>, Top-of-Book &amp; Trades, taken off the <span class="mono">doublezero1</span> tunnel with AF_PACKET. DoubleZero reports the edge device as <span class="mono">fr2-dzx-001</span>, metro Frankfurt; the tunnel peer resolves to Frankfurt am Main.</dd>
+      <dt>The public side</dt>
+      <dd>Kalshi&rsquo;s own perpetuals WebSocket, <span class="mono">external-api-margin-ws.kalshi.com</span>, which anyone can connect to. It resolves into <b>AWS us-east-2 (Ohio)</b>.</dd>
+      <dt>What counts as arrival</dt>
+      <dd>The kernel&rsquo;s own <span class="mono">SO_TIMESTAMPNS</span> stamp, taken as the packet lands on the interface &mdash; not a clock read after our code wakes up.</dd>
+      <dt>Which trades</dt>
+      <dd>Only trades seen on <i>both</i> feeds, joined on the venue timestamp, price and size, so the two columns describe the same prints and not two different samples.</dd>
+    </dl>
+
     <div class="chain" id="abs-chain" style="display:none">
       <div class="chain-node">
-        <div class="chain-name">Kalshi matching engine</div>
-        <div class="chain-where">the exchange stamps the trade &middot; AWS us-east-2, Ohio</div>
+        <div class="chain-name">Kalshi stamps the trade</div>
+        <div class="chain-where">the execution timestamp the venue puts in the message</div>
       </div>
       <div class="chain-hop">
         <span class="chain-ms" id="abs-leg1">&mdash;</span>
-        <span>DoubleZero picks the trade up at the source</span>
+        <span>until DoubleZero stamps the frame it sends</span>
       </div>
       <div class="chain-node">
-        <div class="chain-name">DoubleZero publisher</div>
-        <div class="chain-where">stamps the frame and multicasts it</div>
+        <div class="chain-name">DoubleZero sends the frame</div>
+        <div class="chain-where">the send timestamp in the frame header</div>
       </div>
       <div class="chain-hop">
         <span class="chain-ms" id="abs-leg2">&mdash;</span>
-        <span>carried across the Atlantic over DoubleZero</span>
+        <span>in flight, by those two stamps</span>
       </div>
       <div class="chain-node is-end">
-        <div class="chain-name">This server</div>
-        <div class="chain-where">kernel timestamps the packet &middot; Frankfurt</div>
+        <div class="chain-name">The packet lands on our network card</div>
+        <div class="chain-where">stamped by the kernel, on a clock we check against public time servers</div>
       </div>
       <div class="chain-total">
-        <span class="chain-total-k">Exchange stamp &rarr; here, over DoubleZero <span class="mono" id="abs-n" style="color:var(--faint)"></span></span>
+        <span class="chain-total-k">Venue stamp &rarr; our network card, over DoubleZero <span class="mono" id="abs-n" style="color:var(--faint)"></span></span>
         <span class="chain-total-v" id="abs-total">&mdash;</span>
       </div>
       <div class="vs-row">
@@ -335,7 +360,7 @@ _PAGE_HTML = """<!doctype html>
         <span class="vs-v" id="abs-public">&mdash;</span>
       </div>
       <div class="vs-row">
-        <span class="vs-k">Speed of light in fibre, Ohio &rarr; Frankfurt, for reference</span>
+        <span class="vs-k">Fibre floor for a US-East &rarr; Frankfurt hop, for scale</span>
         <span class="vs-v">~43&ndash;47 ms</span>
       </div>
       <p class="caveat" id="abs-caveat"></p>
@@ -477,16 +502,23 @@ _PAGE_HTML = """<!doctype html>
     // two feeds are not stamped at the same depth. Both are stated, not hidden.
     var c = A.clock;
     var clockTxt = c
-      ? 'This host&rsquo;s clock is disciplined by ' + c.source + ' at stratum ' + c.stratum +
-        ', currently <b>' + Math.abs(c.offset_ms).toFixed(2) + ' ms</b> from true time ' +
-        '(worst-case bound ' + c.error_ms.toFixed(1) + ' ms).'
-      : 'This host&rsquo;s clock offset could not be read, so treat the absolute figures as indicative.';
+      ? 'Our clock is disciplined by ' + c.source + ' at stratum ' + c.stratum +
+        ' and is currently <b>' + Math.abs(c.offset_ms).toFixed(2) + ' ms</b> from true time, ' +
+        'worst case ' + c.error_ms.toFixed(1) + ' ms.'
+      : 'Our clock offset could not be read just now, so treat these totals as indicative.';
     document.getElementById('abs-caveat').innerHTML =
-      clockTxt +
-      ' Exchange timestamps arrive at millisecond resolution, which pushes every total <b>up</b> by under 1 ms, never down.' +
-      ' The DoubleZero side is stamped by the kernel as the packet lands; the public WebSocket side can only be stamped after TLS and JSON decoding, which flatters DoubleZero by a few tenths of a millisecond &mdash; the independent head-to-head race above, where both sides are stamped the same way, puts the lead at ' +
-      (typeof L.p50_ms === 'number' ? Math.abs(L.p50_ms).toFixed(1) + ' ms' : '—') + '.' +
-      ' The split into two legs relies on the publisher&rsquo;s own clock; the total does not.';
+      '<b>What these numbers do and do not prove.</b> ' +
+      'The total rests on two clocks only: Kalshi&rsquo;s and ours. ' + clockTxt +
+      ' The split into two legs additionally trusts the publisher&rsquo;s clock, which we cannot check' +
+      ' &mdash; a skew there would move time between the two legs while leaving the total untouched,' +
+      ' so read the total as the measurement and the split as DoubleZero&rsquo;s own account of it.' +
+      ' Kalshi stamps at millisecond resolution, which pushes every total <b>up</b> by under 1 ms, never down.' +
+      ' The two feeds are also not stamped at the same depth: DoubleZero arrives as raw multicast and is' +
+      ' stamped by the kernel, while a WebSocket message only exists after TLS and JSON decoding, which' +
+      ' flatters DoubleZero here by a few tenths of a millisecond. The head-to-head race above stamps both' +
+      ' sides identically and puts the lead at ' +
+      (typeof L.p50_ms === 'number' ? Math.abs(L.p50_ms).toFixed(1) + ' ms' : '&mdash;') +
+      ' &mdash; that is the more conservative figure of the two.';
   }
 
   function renderWinStrip(state){
