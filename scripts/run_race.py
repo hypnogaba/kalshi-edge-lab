@@ -82,7 +82,7 @@ async def _run_captures(cfg, markets: list[str], args: argparse.Namespace,
         kalshi_capture(cfg, markets, str(public_path), duration_s),
         asyncio.to_thread(
             dz_capture, args.group, args.mktdata_port, args.refdata_port, args.iface,
-            str(dz_path), duration_s,
+            str(dz_path), duration_s, args.link,
         ),
     )
 
@@ -249,6 +249,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--refdata-port", type=int, default=DEFAULT_REFDATA_PORT)
     ap.add_argument("--iface", default=None,
                      help="Local interface IP to join DZ multicast on (e.g. doublezero1's address)")
+    ap.add_argument("--link", default=None,
+                     help="Interface NAME (e.g. doublezero1) to capture the DZ feed via AF_PACKET; "
+                          "required on the DZ tunnel, where a UDP multicast socket receives nothing")
     ap.add_argument("--window-ms", type=float, default=50,
                      help="Fallback match tolerance in ms (default: 50)")
     ap.add_argument("--selfcheck", action="store_true",

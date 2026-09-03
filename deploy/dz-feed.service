@@ -1,0 +1,44 @@
+# ────────────────────────────────────────────────────────────────────────
+# kalshi-edge-lab — DoubleZero live feed reader (scripts.dz_live_feed).
+#
+# Taps the DZ tunnel interface via AF_PACKET (needs CAP_NET_RAW), decodes the
+# Kalshi perps Top-of-Book & Trades feed, and writes data/dz_feed_state.json
+# for the web dashboard. A normal UDP multicast socket receives nothing on the
+# DZ tunnel, hence AF_PACKET — see sources/dz_feed/capture.py.
+#
+# This is a TEMPLATE: replace <REPO_PATH> and <LINK>/<GROUP>/ports as needed.
+#   <REPO_PATH>  — absolute path to the repo (e.g. /root/kalshi-edge-lab)
+#   <LINK>       — DZ tunnel interface name (e.g. doublezero1)
+#
+# Install (run from the repo root, as root — AF_PACKET needs privileges):
+#   sed -e "s|<REPO_PATH>|$(pwd)|g" deploy/dz-feed.service \
+#       | sudo tee /etc/systemd/system/dz-feed.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now dz-feed
+#
+# Manage:  systemctl status dz-feed ; journalctl -u dz-feed -f
+#
+# Prereq: the DZ tunnel must be up first —
+#   doublezero connect multicast --subscribe-feed kalshi-perps-tob-fra
+# ────────────────────────────────────────────────────────────────────────
+
+[Unit]
+Description=kalshi-edge-lab DoubleZero live feed reader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=<REPO_PATH>
+EnvironmentFile=-<REPO_PATH>/.env
+ExecStart=<REPO_PATH>/.venv/bin/python -m scripts.dz_live_feed \
+    --link doublezero1 --group 233.84.178.3 \
+    --mktdata-port 31000 --refdata-port 41000 \
+    --out data/dz_feed_state.json
+AmbientCapabilities=CAP_NET_RAW
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

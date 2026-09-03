@@ -129,14 +129,15 @@ class DzDecoder:
         ]
 
     def _decode_trade(self, raw: bytes, offset: int, t_arrival_ns: int) -> Event:
-        (instr_id, _source_id, aggressor_side, _trade_flags, _source_ts_ns, price_raw,
+        (instr_id, _source_id, aggressor_side, _trade_flags, source_ts_ns, price_raw,
          qty_raw, trade_id, _cum_volume) = _TRADE_BODY.unpack_from(
             raw, offset + _MSG_HEADER.size)
         market, price_exp, qty_exp = self._market_and_exponents(instr_id)
         side = Side.BUY if aggressor_side == 1 else Side.SELL if aggressor_side == 2 else None
         return Event(source=Source.DZ_FEED, t_arrival_ns=t_arrival_ns, market=market,
                      kind=Kind.TRADE, side=side, price=price_raw * 10**price_exp,
-                     size=qty_raw * 10**qty_exp, seq=trade_id)
+                     size=qty_raw * 10**qty_exp, seq=trade_id,
+                     exch_ts_ns=source_ts_ns)
 
 
 _default_decoder = DzDecoder()
