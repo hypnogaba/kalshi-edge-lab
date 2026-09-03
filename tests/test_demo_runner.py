@@ -92,11 +92,32 @@ def test_each_bot_reads_its_own_book():
     assert snap["scoreboard"][PUBLIC]["intents"] == 1
 
 
-def test_an_unverified_market_is_ignored_entirely():
-    """A market whose contract size has not been measured across both feeds
-    would give the two bots different thresholds, so it must not reach a bot."""
-    from demo.runner import CONTRACT_SIZE, _rescale_dz
+def test_dz_sizes_are_put_on_the_public_feed_axes_per_market():
+    """The DZ side reports the underlying; a bot must see contracts, or its
+    threshold means something different on every market."""
+    from demo.runner import _rescale_dz
 
-    assert "KXBTCPERP" in CONTRACT_SIZE
-    event = trade(Source.DZ_FEED, 1 * MS, 500_000, price=77756.0, size=0.0014)
-    assert _rescale_dz(event).size == pytest.approx(14.0), "underlying -> contracts"
+    btc = trade(Source.DZ_FEED, 1 * MS, 500_000, price=77756.0, size=0.0014)
+    assert _rescale_dz(btc, 1e-4).size == pytest.approx(14.0)
+    doge = trade(Source.DZ_FEED, 1 * MS, 500_000, price=0.0828, size=60_000.0)
+    assert _rescale_dz(doge, 100.0).size == pytest.approx(600.0), \
+        "the same 1e-4 on DOGE is what produced '6,000,000 contracts'"
+
+
+def test_the_headline_fill_rates_come_from_paired_duels_only():
+    """The number the stream quotes is per-duel, not per-bot: an intent one bot
+    never had must not dilute either rate."""
+    state = fresh_state()
+    for event in dz_quote(100.0, 100.5, 0) + pub_quote(100.0, 100.5, 0):
+        state.on_event(DZ if event.source is Source.DZ_FEED else PUBLIC, event)
+    state.on_event(DZ, trade(Source.DZ_FEED, 1 * MS, 500_000))
+    for event in dz_quote(100.0, 101.0, 3 * MS):
+        state.on_event(DZ, event)
+    state.on_event(PUBLIC, trade(Source.MARGIN_WS, 8 * MS, 500_000))
+    state.settle_due()
+
+    h2h = state.snapshot()["head_to_head"]
+    assert h2h["n"] == 1
+    assert h2h["dz_fill_rate"] == 100.0
+    assert h2h["public_fill_rate"] == 0.0
+    assert h2h["median_lead_ms"] == 7.0

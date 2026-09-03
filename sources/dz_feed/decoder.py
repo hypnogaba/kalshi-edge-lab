@@ -101,11 +101,13 @@ class DzDecoder:
 
     def _decode_instrument_definition(self, raw: bytes, offset: int) -> None:
         (instr_id, source_id, symbol_raw, _leg1, _leg2, _asset_class, price_exp,
-         qty_exp, _market_model, _tick_size, _lot_size, _contract_value, _expiry,
+         qty_exp, _market_model, tick_size, lot_size, contract_value, _expiry,
          _settle_type, _price_bound, _manifest_seq) = _INSTRUMENT_DEFINITION_BODY.unpack_from(
             raw, offset + _MSG_HEADER.size)
         symbol = symbol_raw.split(b"\x00", 1)[0].decode("ascii", errors="replace")
-        self.registry.update(instr_id, symbol, price_exp, qty_exp, source_id)
+        self.registry.update(instr_id, symbol, price_exp, qty_exp, source_id,
+                             tick_size_raw=tick_size, lot_size_raw=lot_size,
+                             contract_value_raw=contract_value)
 
     def _market_and_exponents(self, instr_id: int) -> tuple[str, int, int]:
         instrument = self.registry.get(instr_id)

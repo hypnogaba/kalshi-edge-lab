@@ -53,16 +53,18 @@ MARGIN_WS_URL = "wss://external-api-margin-ws.kalshi.com/trade-api/ws/v2/margin"
 MARGIN_WS_PATH = "/trade-api/ws/v2/margin"
 _ETH_P_IP = 0x0800
 _DUEL_TTL_NS = 30 * 1_000_000_000
+DEFAULT_WINDOW_MIN = 360.0  # rolling window for the headline numbers
 
-# Only markets whose contract size has been VERIFIED against both feeds belong
-# here. The DZ feed reports trade size in the underlying, the public feed in
-# contracts, and the ratio between them is the market's contract size. Measured
-# on live matched trades: KXBTCPERP = 1e-4 exactly (40 matches). Assuming that
-# constant holds everywhere gives the two bots different effective thresholds on
-# every other market, which would quietly rig the comparison -- so a market
-# stays out until its ratio is measured the same way.
-CONTRACT_SIZE = {"KXBTCPERP": 1e-4}
-PERP_TICKERS = sorted(CONTRACT_SIZE)
+# The DZ feed reports trade size in the underlying, the public feed counts
+# contracts. The ratio is the market's contract size, and it differs per market
+# (BTC 1e-4, DOGE 100). It is NOT hard-coded here: the feed's own instrument
+# definitions carry it as lot_size, which was checked against the ratio measured
+# on live matched BTC trades. See sources/dz_feed/registry.py.
+PERP_TICKERS = [
+    "KXBTCPERP", "KXETHPERP", "KXSOLPERP", "KXXRPPERP", "KXBCHPERP", "KXDOGEPERP",
+    "KXHYPEPERP", "KXKSHIBPERP", "KXLINKPERP", "KXLTCPERP", "KXNEARPERP",
+    "KXSUIPERP", "KXZECPERP",
+]
 
 DZ = "doublezero"
 PUBLIC = "public"
@@ -111,10 +113,17 @@ class DemoState:
     a thread and the public WS in the event loop."""
 
     def __init__(self, config: StrategyConfig, markout_ns: int,
-                 reaction_ns: int = DEFAULT_REACTION_NS) -> None:
+                 reaction_ns: int = DEFAULT_REACTION_NS,
+                 window_min: float = DEFAULT_WINDOW_MIN) -> None:
         self._lock = threading.Lock()
         self._markout_ns = markout_ns
         self._reaction_ns = reaction_ns
+        self._window_ns = int(window_min * 60 * 1e9)
+        self._window_min = window_min
+        # (wall_ns, dz_filled, public_filled, lead_ms) for duels both bots acted
+        # on. Lifetime totals live in the scoreboards; this is what the headline
+        # quotes, so a demo that has been up for days still shows today.
+        self._settled: deque[tuple[int, bool, bool, float]] = deque()
         self.truth = GroundTruth()
         self.bots = {DZ: FollowThePrint(config), PUBLIC: FollowThePrint(config)}
         self.boards = {DZ: Scoreboard(DZ), PUBLIC: Scoreboard(PUBLIC)}
@@ -157,26 +166,41 @@ class DemoState:
                     self._duels[key] = duel
                     self._recent.append(duel)
                 duel.add(name, fill)
+                if DZ in duel.sides and PUBLIC in duel.sides:
+                    dz_fill, pub_fill = duel.sides[DZ], duel.sides[PUBLIC]
+                    lead_ms = (pub_fill.intent.t_decided_ns
+                               - dz_fill.intent.t_decided_ns) / 1e6
+                    self._settled.append((now, dz_fill.filled, pub_fill.filled, lead_ms))
+            window_start = now - self._window_ns
+            while self._settled and self._settled[0][0] < window_start:
+                self._settled.popleft()
             cutoff = now - _DUEL_TTL_NS
             for key in [k for k, d in self._duels.items() if d.created_wall_ns < cutoff]:
                 del self._duels[key]
 
     def snapshot(self) -> dict:
         with self._lock:
-            both = [d for d in self._recent if DZ in d.sides and PUBLIC in d.sides]
+            settled = list(self._settled)
+            n = len(settled)
+            leads = sorted(lead for _, _, _, lead in settled)
             head_to_head = {
-                "n": len(both),
-                "dz_only_filled": sum(1 for d in both
-                                      if d.sides[DZ].filled and not d.sides[PUBLIC].filled),
-                "public_only_filled": sum(1 for d in both
-                                          if d.sides[PUBLIC].filled and not d.sides[DZ].filled),
-                "both_filled": sum(1 for d in both
-                                   if d.sides[DZ].filled and d.sides[PUBLIC].filled),
+                "window_min": self._window_min,
+                "n": n,
+                "dz_only_filled": sum(1 for _, dz, pub, _ in settled if dz and not pub),
+                "public_only_filled": sum(1 for _, dz, pub, _ in settled if pub and not dz),
+                "both_filled": sum(1 for _, dz, pub, _ in settled if dz and pub),
+                "neither_filled": sum(1 for _, dz, pub, _ in settled if not dz and not pub),
+                "dz_fill_rate": round(100.0 * sum(1 for _, dz, _, _ in settled if dz) / n, 1)
+                                 if n else None,
+                "public_fill_rate": round(100.0 * sum(1 for _, _, pub, _ in settled if pub) / n, 1)
+                                    if n else None,
+                "median_lead_ms": round(leads[n // 2], 3) if n else None,
             }
             return {
                 "updated_at": time.time(),
                 "uptime_s": round((now_ns() - self.started_ns) / 1e9, 1),
                 "mode": "paper",
+                "markets": PERP_TICKERS,
                 "markout_ms": self._markout_ns / 1e6,
                 "reaction_ms": self._reaction_ns / 1e6,
                 "events": dict(self.counts),
@@ -197,6 +221,8 @@ def _dz_reader(state: DemoState, group: str, ports: set[int], link: str,
     sock.bind((link, 0))
     sock.settimeout(0.5)
     decoder = DzDecoder()
+    wanted = set(PERP_TICKERS)
+    contract_sizes: dict[str, float] = {}
     try:
         while not stop.is_set():
             try:
@@ -210,21 +236,29 @@ def _dz_reader(state: DemoState, group: str, ports: set[int], link: str,
                 continue
             t = now_ns()
             for event in decoder.decode(data[ihl + 8:], t):
-                if event.market not in CONTRACT_SIZE:
+                if event.size is None or event.market not in wanted:
                     continue
-                if event.size is None:
-                    continue
-                state.on_event(DZ, _rescale_dz(event))
+                contract_size = contract_sizes.get(event.market)
+                if contract_size is None:
+                    instrument = decoder.registry.by_symbol(event.market)
+                    # Reference data arrives on the refdata port within seconds
+                    # of joining. Until it does, a market's sizes cannot be put
+                    # on the public feed's axes, so it is skipped rather than
+                    # guessed.
+                    if instrument is None or instrument.contract_size <= 0:
+                        continue
+                    contract_size = contract_sizes[event.market] = instrument.contract_size
+                state.on_event(DZ, _rescale_dz(event, contract_size))
     finally:
         sock.close()
 
 
-def _rescale_dz(event: Event) -> Event:
+def _rescale_dz(event: Event, contract_size: float) -> Event:
     """DZ sizes are in the underlying; the public feed counts contracts. Put the
     DZ side onto contracts so both bots read one threshold the same way."""
     return Event(source=event.source, t_arrival_ns=event.t_arrival_ns,
                  market=event.market, kind=event.kind, price=event.price,
-                 size=event.size / CONTRACT_SIZE[event.market], side=event.side,
+                 size=event.size / contract_size, side=event.side,
                  seq=event.seq, exch_ts_ns=event.exch_ts_ns)
 
 

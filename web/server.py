@@ -7,6 +7,7 @@ perpetual. It only reads two JSON snapshots written by the two collector
 services and never places orders or touches funds:
   - data/dz_latency.json     (scripts.dz_latency_race)
   - data/dz_feed_state.json  (scripts.dz_live_feed)
+  - data/demo_state.json     (demo.runner, served at /duel)
 """
 from __future__ import annotations
 
@@ -21,9 +22,12 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
+from web.duel_page import DUEL_HTML
+
 REFRESH_SECONDS = float(os.environ.get("EDGE_WEB_INTERVAL", "2"))
 DZ_FEED_STATE_PATH = Path("data/dz_feed_state.json")
 DZ_LATENCY_PATH = Path("data/dz_latency.json")
+DEMO_STATE_PATH = Path("data/demo_state.json")
 DZ_FRESH_SECONDS = 15  # a snapshot older than this is treated as not-live
 
 STATE: dict = {
@@ -32,6 +36,7 @@ STATE: dict = {
     "dz_feed": "pending",
     "dz_live": None,
     "latency": None,
+    "duel": None,
 }
 
 _refresh_task: asyncio.Task | None = None
@@ -55,6 +60,7 @@ async def refresh_once() -> None:
     STATE["dz_live"] = live
     STATE["dz_feed"] = "live" if live else "pending"
     STATE["latency"] = _read_fresh(DZ_LATENCY_PATH)
+    STATE["duel"] = _read_fresh(DEMO_STATE_PATH)
     STATE["updated_ns"] = time.monotonic_ns()
     STATE["updated_iso"] = datetime.now(UTC).isoformat()
 
@@ -102,9 +108,20 @@ async def events(request: Request) -> StreamingResponse:
     )
 
 
+@app.get("/api/duel")
+async def get_duel() -> JSONResponse:
+    """The two-bot state on its own, for the /duel page's 1 Hz poll."""
+    return JSONResponse(STATE["duel"] or {})
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
     return HTMLResponse(_PAGE_HTML)
+
+
+@app.get("/duel", response_class=HTMLResponse)
+async def duel() -> HTMLResponse:
+    return HTMLResponse(DUEL_HTML)
 
 
 _PAGE_HTML = """<!doctype html>
