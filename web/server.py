@@ -195,6 +195,23 @@ _PAGE_HTML = """<!doctype html>
   .vs-v{font-family:"IBM Plex Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums;
     font-size:19px; color:var(--muted)}
   .setting{margin-top:-4px}
+  /* Two distributions on one axis: a median says where the middle is, the
+     shape says whether the paths are separate populations at all. */
+  .dist{margin-top:20px}
+  .dist-head{display:flex; align-items:baseline; justify-content:space-between;
+    gap:14px; flex-wrap:wrap; margin-bottom:10px}
+  .dist-title{font-size:13.5px; color:var(--muted)}
+  .dist-key{display:flex; gap:14px; font-size:11.5px; color:var(--faint);
+    font-family:"IBM Plex Mono",ui-monospace,monospace}
+  .sw{display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px;
+    vertical-align:middle}
+  .sw-dz{background:var(--accent)}
+  .sw-pub{background:var(--faint)}
+  .dist svg{display:block; width:100%; height:auto; overflow:visible}
+  .pct th, .pct td{white-space:nowrap}
+  .pct tbody tr td:first-child{color:var(--fg)}
+  .pct .lead td{color:var(--accent); border-top:1px solid var(--line)}
+  .pct .lead td:first-child{color:var(--muted)}
   /* The method is kept out of the way but one click from anyone checking it. */
   .method{margin:18px 0 0; border-top:1px solid var(--line); padding-top:14px}
   .method summary{cursor:pointer; color:var(--faint); font-size:12.5px;
@@ -348,14 +365,29 @@ _PAGE_HTML = """<!doctype html>
         <span class="chain-total-k">Venue stamp &rarr; our network card, over DoubleZero <span class="mono" id="abs-n" style="color:var(--faint)"></span></span>
         <span class="chain-total-v" id="abs-total">&mdash;</span>
       </div>
-      <div class="vs-row">
-        <span class="vs-k">The same trades over Kalshi&rsquo;s public WebSocket</span>
-        <span class="vs-v" id="abs-public">&mdash;</span>
+
+      <div class="dist">
+        <div class="dist-head">
+          <span class="dist-title">Where every trade landed</span>
+          <span class="dist-key">
+            <span><i class="sw sw-dz"></i>DoubleZero</span>
+            <span><i class="sw sw-pub"></i>public WebSocket</span>
+          </span>
+        </div>
+        <div id="abs-hist"></div>
       </div>
-      <div class="vs-row">
-        <span class="vs-k">Fibre floor for a US-East &rarr; Frankfurt hop, for scale</span>
-        <span class="vs-v">~43&ndash;47 ms</span>
+
+      <div class="card" style="margin-top:14px">
+        <table class="tbl pct">
+          <thead><tr>
+            <th>Latency, venue stamp to our card</th>
+            <th class="num">P50</th><th class="num">P90</th>
+            <th class="num">P95</th><th class="num">P99</th><th class="num">Max</th>
+          </tr></thead>
+          <tbody id="abs-pct"></tbody>
+        </table>
       </div>
+      <p class="subnote" style="margin-top:10px">A US-East to Frankfurt hop cannot beat about 43&ndash;47 ms through real fibre, so the floor of this chart is physics, not engineering. The tail is where the two paths part company.</p>
       <details class="method">
         <summary>How this is measured</summary>
         <dl class="setup">
@@ -486,6 +518,83 @@ _PAGE_HTML = """<!doctype html>
 
   function ms(v){ return (typeof v === 'number') ? v.toFixed(1) + ' ms' : '—'; }
 
+  // Two histograms sharing one x axis and one y scale, drawn as small
+  // multiples rather than overlaid: overlapping translucent bars hide exactly
+  // the region where the two distributions meet, which is the region worth
+  // seeing. Counts past the axis get their own labelled marker so a heavy
+  // tail cannot be lost off the right edge.
+  function histSvg(h){
+    if(!h) return '';
+    var W = 720, ROW = 54, PAD_L = 74, PAD_R = 34, AX = 20, GAP = 14;
+    var H = ROW * 2 + GAP + AX;
+    var n = h.dz.length;
+    var peak = 0;
+    for(var i = 0; i < n; i++){
+      if(h.dz[i] > peak) peak = h.dz[i];
+      if(h.public[i] > peak) peak = h.public[i];
+    }
+    if(peak <= 0) return '';
+    var plotW = W - PAD_L - PAD_R, bw = plotW / n;
+
+    function row(bins, over, y, colour, label){
+      var s = '<text x="' + (PAD_L - 10) + '" y="' + (y + ROW - 4) +
+              '" text-anchor="end" class="hx" fill="var(--muted)">' + label + '</text>';
+      for(var i = 0; i < n; i++){
+        if(!bins[i]) continue;
+        var bh = Math.max(1, (bins[i] / peak) * (ROW - 6));
+        s += '<rect x="' + (PAD_L + i * bw).toFixed(2) + '" y="' + (y + ROW - bh).toFixed(2) +
+             '" width="' + Math.max(1, bw - 0.6).toFixed(2) + '" height="' + bh.toFixed(2) +
+             '" fill="' + colour + '" rx="0.5"><title>' +
+             (h.lo_ms + i * h.width_ms).toFixed(0) + '–' +
+             (h.lo_ms + (i + 1) * h.width_ms).toFixed(0) + ' ms: ' + bins[i] + '</title></rect>';
+      }
+      if(over > 0){
+        s += '<text x="' + (W - PAD_R + 5) + '" y="' + (y + ROW - 1) +
+             '" class="hx" fill="' + colour + '">+' + over + '</text>';
+      }
+      return s;
+    }
+
+    var g = row(h.dz, h.dz_over, 0, 'var(--accent)', 'DoubleZero');
+    g += row(h.public, h.public_over, ROW + GAP, 'var(--faint)', 'public WS');
+
+    var axisY = ROW * 2 + GAP;
+    g += '<line x1="' + PAD_L + '" y1="' + axisY + '" x2="' + (W - PAD_R) +
+         '" y2="' + axisY + '" stroke="var(--line)"/>';
+    for(var t = h.lo_ms; t <= h.hi_ms; t += 10){
+      var x = PAD_L + ((t - h.lo_ms) / (h.hi_ms - h.lo_ms)) * plotW;
+      g += '<line x1="' + x.toFixed(1) + '" y1="' + axisY + '" x2="' + x.toFixed(1) +
+           '" y2="' + (axisY + 4) + '" stroke="var(--line)"/>' +
+           '<text x="' + x.toFixed(1) + '" y="' + (axisY + 15) +
+           '" text-anchor="middle" class="hx" fill="var(--faint)">' + t + '</text>';
+    }
+    g += '<text x="' + (W - PAD_R) + '" y="' + (axisY + 15) +
+         '" text-anchor="end" class="hx" fill="var(--faint)">ms</text>';
+
+    return '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" ' +
+           'aria-label="Latency distribution, DoubleZero against the public WebSocket">' +
+           '<style>.hx{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10.5px}</style>' +
+           g + '</svg>';
+  }
+
+  function pctRows(A){
+    var keys = ['p50_ms','p90_ms','p95_ms','p99_ms','max_ms'];
+    function cells(o){
+      return keys.map(function(k){
+        return '<td class="num mono">' + (o && typeof o[k] === 'number' ? o[k].toFixed(1) : '—') + '</td>';
+      }).join('');
+    }
+    var dz = A.dz_total, pub = A.public_total;
+    var lead = keys.map(function(k){
+      var d = (dz && pub && typeof dz[k] === 'number' && typeof pub[k] === 'number')
+        ? pub[k] - dz[k] : null;
+      return '<td class="num mono">' + (d === null ? '—' : (d >= 0 ? '+' : '') + d.toFixed(1)) + '</td>';
+    }).join('');
+    return '<tr><td>DoubleZero</td>' + cells(dz) + '</tr>' +
+           '<tr><td>Public WebSocket</td>' + cells(pub) + '</tr>' +
+           '<tr class="lead"><td>DoubleZero ahead by</td>' + lead + '</tr>';
+  }
+
   function renderAbsolute(state){
     var L = state && state.latency;
     var A = L && L.absolute;
@@ -500,10 +609,8 @@ _PAGE_HTML = """<!doctype html>
     document.getElementById('abs-leg2').textContent = leg2 ? ms(leg2.p50_ms) : '—';
     document.getElementById('abs-total').textContent = ms(A.dz_total.p50_ms);
     document.getElementById('abs-n').textContent = '· median of ' + A.n + ' matched trades';
-
-    var lead = A.public_total.p50_ms - A.dz_total.p50_ms;
-    document.getElementById('abs-public').textContent =
-      ms(A.public_total.p50_ms) + '  (' + (lead >= 0 ? '+' : '') + lead.toFixed(1) + ' ms)';
+    document.getElementById('abs-hist').innerHTML = histSvg(A.hist);
+    document.getElementById('abs-pct').innerHTML = pctRows(A);
 
     // The number is only as good as the clock it was measured against, and the
     // two feeds are not stamped at the same depth. Both are stated, not hidden.

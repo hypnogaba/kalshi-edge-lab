@@ -82,6 +82,44 @@ def _match_key(market: str, dollars: float, contracts: float, exch_ms: int) -> t
     return (market, exch_ms, round(dollars), round(contracts))
 
 
+_HIST_LO_MS = 45.0
+_HIST_HI_MS = 95.0
+_HIST_BINS = 50
+
+
+def _histogram(dz: list[float], public: list[float]) -> dict:
+    """Both feeds binned on ONE shared axis, so the two shapes are comparable.
+
+    A median says where the middle sits; the shape says whether the two paths
+    are actually separate populations or merely different averages of the same
+    one. Values past the top of the axis are counted, not dropped, so a heavy
+    tail cannot be hidden by the choice of range.
+    """
+    width = (_HIST_HI_MS - _HIST_LO_MS) / _HIST_BINS
+
+    def bin_them(vals: list[float]) -> tuple[list[int], int, int]:
+        bins = [0] * _HIST_BINS
+        under = over = 0
+        for v in vals:
+            if v is None:
+                continue
+            if v < _HIST_LO_MS:
+                under += 1
+            elif v >= _HIST_HI_MS:
+                over += 1
+            else:
+                bins[int((v - _HIST_LO_MS) / width)] += 1
+        return bins, under, over
+
+    dz_bins, dz_under, dz_over = bin_them(dz)
+    pub_bins, pub_under, pub_over = bin_them(public)
+    return {
+        "lo_ms": _HIST_LO_MS, "hi_ms": _HIST_HI_MS, "width_ms": round(width, 4),
+        "dz": dz_bins, "dz_under": dz_under, "dz_over": dz_over,
+        "public": pub_bins, "public_under": pub_under, "public_over": pub_over,
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class Half:
     """One feed's sighting of a trade, before its twin on the other feed shows up.
@@ -223,15 +261,20 @@ class RaceState:
             def at(p: float) -> float:
                 return round(vals[min(m - 1, int(m * p))], 3)
 
+            # P50/P90/P95/P99 are the percentiles DoubleZero's own scoreboard
+            # reports, and the tail is the half of a latency figure that a
+            # median alone hides.
             return {"n": m, "p10_ms": at(0.10), "p50_ms": at(0.50),
-                    "p90_ms": at(0.90), "min_ms": round(vals[0], 3),
-                    "max_ms": round(vals[-1], 3)}
+                    "p90_ms": at(0.90), "p95_ms": at(0.95), "p99_ms": at(0.99),
+                    "avg_ms": round(sum(vals) / m, 3),
+                    "min_ms": round(vals[0], 3), "max_ms": round(vals[-1], 3)}
 
         rows = list(self._abs)
         block["dz_total"] = pcts([r[1] for r in rows])
         block["public_total"] = pcts([r[2] for r in rows])
         block["dz_transport"] = pcts([r[3] for r in rows])
         block["exch_to_pub"] = pcts([r[4] for r in rows])
+        block["hist"] = _histogram([r[1] for r in rows], [r[2] for r in rows])
         return block
 
 
