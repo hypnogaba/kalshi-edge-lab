@@ -1,27 +1,25 @@
-# Server deploy — plain-language guide
+# Server deploy guide
 
 ## 1. What this is / why a server
 
-This project measures whether the DoubleZero (DZ) network delivers Kalshi
-market data faster than the public internet. The comparison only means
-anything if both feeds are captured on the same machine, at the same time —
-and the DZ edge feed **only arrives on a Linux host that is connected to
-DoubleZero**. A laptop isn't connected to DZ, so it can't receive that feed.
+This project decodes the DoubleZero (DZ) edge feed of Kalshi crypto perpetuals and measures
+how much sooner it delivers each trade than Kalshi's public perps WebSocket. The comparison
+only means anything if both feeds are captured on the same machine at the same time — and the
+DZ edge feed **only arrives on a Linux host connected to DoubleZero**. A laptop isn't connected
+to DZ, so it can't receive that feed.
 
-Development and the offline self-check already work fine on a laptop. This
-guide is for the one extra step: running the real race (and optionally the
-demo bot) on a Linux server that has a DoubleZero connection.
+Development and the offline self-check already work on a laptop. This guide covers the one extra
+step: running the real race and the live collectors on a DoubleZero-connected Linux server.
 
 ## 2. What you need (once)
 
 - A Linux host (Ubuntu or similar).
-- That host connected to DoubleZero. Setup instructions:
-  https://docs.malbeclabs.com/setup
-- An access pass for the host's receiving IP. During the beta, DoubleZero
-  grants these — ask them if you don't have one yet. Without an access pass,
-  the multicast feed won't reach you even if the tunnel is up.
-- A Kalshi **PROD** API key that is **read-only** (market data only — no
-  trading permission needed for the race itself).
+- That host connected to DoubleZero. Setup: https://docs.malbeclabs.com/setup
+- An access pass for the host's receiving IP. During the beta, DoubleZero grants these — ask
+  them if you don't have one yet. Without an access pass, the multicast feed won't reach you
+  even if the tunnel is up.
+- A Kalshi **PROD** API key that is **read-only** (market data only — no trading permission is
+  needed for the race).
 
 ## 3. Steps
 
@@ -37,8 +35,7 @@ bash deploy/setup.sh
 `setup.sh` will tell you if `.env` was just created from `.env.example`. If so:
 
 ```bash
-# 3. Edit .env and set your Kalshi PROD key ID
-#    (KALSHI_PROD_KEY_ID=...)
+# 3. Edit .env and set your Kalshi PROD key ID (KALSHI_PROD_KEY_ID=...)
 nano .env
 
 # 4. Put the matching private key file here (this exact path/name):
@@ -46,21 +43,18 @@ nano .env
 ```
 
 ```bash
-# 5. Find the Kalshi feed's DoubleZero multicast group
+# 5. Find the Kalshi perps feed's DoubleZero multicast group
 doublezero multicast group list
-# Look for the Kalshi group in the output — that's your GROUP value below.
+# Look for the Kalshi perps group in the output — that's your GROUP value below.
 
 # 6. Run the race (replace MARKET / GROUP / IFACE with your values)
-MARKET=KXBTC-25DEC31 GROUP=239.1.1.1 IFACE=eth0 bash deploy/run_race.sh
+MARKET=KXBTCPERP GROUP=233.84.178.3 IFACE=doublezero1 bash deploy/run_race.sh
 ```
 
-- `MARKET` — a concrete active Kalshi ticker (e.g. a BTC strike-ladder
-  market). Kalshi has no single "BTCPERP" market — pick one that's live.
-- `GROUP` — the DZ multicast group address for the Kalshi feed, from step 5.
-- `IFACE` — the network interface used to join the multicast group (usually
-  the DZ tunnel interface, `doublezero1`, or the physical NIC your routing
-  table uses for that multicast route — check with your DZ setup docs if
-  unsure).
+- `MARKET` — a Kalshi crypto-perp ticker (e.g. `KXBTCPERP`, `KXETHPERP`).
+- `GROUP` — the DZ multicast group address for the Kalshi perps feed, from step 5.
+- `IFACE` — the DZ tunnel interface (`doublezero1`); the runner captures via `AF_PACKET`, which
+  is required on the tunnel because a normal UDP multicast socket receives nothing there.
 
 ```bash
 # 7. Read the results
@@ -68,51 +62,34 @@ open data/race/race.png     # (or scp it to your laptop and open it there)
 # p50 / p90 / p99 latency numbers are also printed to the terminal.
 ```
 
-## 4. Optional — run the demo bot as a service
+## 4. Live web dashboard
 
-If you also want the demo trading bot (`bot/run.py`) running continuously
-under systemd (auto-restart on crash, starts on boot):
-
-```bash
-# Fill in <USER> and <REPO_PATH> and install the unit:
-sed -e "s|<USER>|$(whoami)|g" -e "s|<REPO_PATH>|$(pwd)|g" \
-    deploy/kalshi-edge-bot.service | sudo tee /etc/systemd/system/kalshi-edge-bot.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now kalshi-edge-bot
-
-# Check on it:
-sudo systemctl status kalshi-edge-bot
-journalctl -u kalshi-edge-bot -f
-
-# Emergency stop (kill switch, without touching the service):
-touch data/KILL
-```
-
-See `deploy/kalshi-edge-bot.service` for the full unit file and comments.
-
-## 5. Live web dashboard
-
-A small FastAPI service that reuses the same Kalshi/Binance/bot-signal modules as
-`bot/run.py` and streams the live state to a browser over Server-Sent Events. Read-only
-— it never places orders.
+A read-only FastAPI + SSE service (`web/server.py`) that serves a self-contained monochrome
+page: a live latency scoreboard plus the live decoded feed for every Kalshi crypto perpetual.
+It never places orders.
 
 ```bash
 uv run python -m web.server     # http://localhost:8080 by default
 ```
 
-Env knobs (all optional):
+The page reads two JSON snapshots written by two collector services that run on the
+DZ-connected host:
+
+- `scripts/dz_live_feed.py`    → `data/dz_feed_state.json` (decoded live feed)
+- `scripts/dz_latency_race.py` → `data/dz_latency.json` (rolling latency summary)
+
+Both collectors tap the tunnel via `AF_PACKET`, so they need `CAP_NET_RAW` (run under `sudo`
+with the venv python); the latency race also needs the Kalshi PROD key in `.env`.
+
+Env knobs for the dashboard (all optional):
 
 - `EDGE_WEB_PORT` — listen port (default `8080`)
 - `EDGE_WEB_HOST` — listen host (default `0.0.0.0`)
-- `EDGE_WEB_INTERVAL` — refresh interval in seconds (default `3`)
-- `EDGE_WEB_NEAR` — number of near-money markets to watch (default `8`)
+- `EDGE_WEB_INTERVAL` — refresh interval in seconds (default `2`)
 
 Endpoints: `/` (the page), `/events` (SSE stream), `/api/state` (plain JSON snapshot).
-If `data/race/race_stats.json` exists (written by `scripts/run_race.py`), its stats are
-shown on the page and the "DZ feed" pill flips from `pending` to `live`.
 
-To run it continuously as a service, see `deploy/edge-web.service` (systemd unit
-template, same install pattern as `deploy/kalshi-edge-bot.service` above).
+To run it continuously as a service, see `deploy/edge-web.service` (systemd unit template).
 
 Reverse proxy (Caddy, one-liner, TLS handled automatically):
 
@@ -122,28 +99,23 @@ edge.example.com {
 }
 ```
 
-## 6. Validate with no feed/keys at all
+## 5. Validate with no feed/keys at all
 
-If you just want to confirm the code itself is wired correctly (matching,
-stats, chart rendering) without any DZ feed or Kalshi credentials:
+To confirm the code itself is wired correctly (matching, stats, chart rendering) without any DZ
+feed or Kalshi credentials:
 
 ```bash
 uv run python -m scripts.run_race --selfcheck
 ```
 
-This uses synthetic data and should print `SELFCHECK: PASS`. It's the same
-check `deploy/setup.sh` runs automatically at the end of setup.
+This uses synthetic data and should print `SELFCHECK: PASS`. It's the same check `setup.sh`
+runs automatically at the end of setup.
 
-## 7. Free public URL via Cloudflare Tunnel (no domain needed)
+## 6. Free public URL via Cloudflare Tunnel (no domain needed)
 
-Do NOT try to host the dashboard on free serverless (Vercel / Cloudflare
-Pages / GitHub Pages). Kalshi and Binance **rate-limit or block shared cloud
-egress IPs** (observed: Kalshi `429`, Binance `403` from Cloudflare). The
-dashboard must run on a host with a normal IP that those APIs allow — your DZ
-server or any VPS/box — and be exposed with a tunnel. The server fetches the
-data from its own (allowed) IP; the tunnel only proxies inbound HTTP.
-
-Run the dashboard, then tunnel to it:
+Run the dashboard on the DZ server (a host with a normal IP the Kalshi API allows), then expose
+it with a tunnel — the server fetches data from its own IP; the tunnel only proxies inbound
+HTTP.
 
 ```bash
 # 1. run the dashboard on the host (default :8080), e.g. via systemd:
@@ -164,6 +136,5 @@ cloudflared tunnel run --url http://localhost:8080 edge-lab
 #   → stable https://edge.<your-domain>
 ```
 
-For an always-on quick tunnel, wrap step (2a) in its own systemd service.
-This is the recommended home for the live dashboard once the DZ server is up —
-one host serves both the latency race and the public dashboard.
+For an always-on quick tunnel, wrap step (2a) in its own systemd service. One host serves both
+the latency race and the public dashboard.

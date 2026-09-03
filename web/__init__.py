@@ -1,2 +1,2 @@
-"""Live web dashboard: FastAPI + SSE service over the same Kalshi/Binance/bot-signal
-modules used by bot/run.py. See web/server.py."""
+"""Live web dashboard: a read-only FastAPI + SSE service that serves the live
+latency scoreboard and decoded DoubleZero Kalshi-perps feed. See web/server.py."""

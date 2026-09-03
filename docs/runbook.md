@@ -1,13 +1,13 @@
 # Runbook — running the Kalshi × DoubleZero latency race on the server
 
-The race compares two ways of getting the **same Kalshi market data** on **one host**:
+The race compares two ways of getting the **same Kalshi crypto-perp trades** on **one host**:
 
-- **Direct baseline** — the public Kalshi WebSocket.
-- **Fast path** — the DoubleZero edge multicast feed carrying Kalshi.
+- **Public baseline** — Kalshi's public perps WebSocket (`external-api-margin-ws.kalshi.com`).
+- **Edge path** — the DoubleZero edge multicast feed carrying Kalshi perps.
 
 It reports `t_dz − t_public` per matched trade. **Negative = DoubleZero delivered it first.**
 
-Everything is built. This runbook is the server-side operation.
+The code is complete; this runbook is the server-side operation.
 
 ## Prerequisites (operator)
 
@@ -17,7 +17,7 @@ Everything is built. This runbook is the server-side operation.
    ```
    GRE (IP protocol 47) allowed inbound; on AWS disable the ENI source/dest check.
 2. **Access pass** granted for the receiving IP (DoubleZero grants this during beta).
-3. **Kalshi prod read-only key** for the direct baseline (Kalshi signs even public channels):
+3. **Kalshi prod read-only key** for the public baseline (Kalshi authenticates the socket at connect):
    - Create at kalshi.com → `/account/profile` → API Keys.
    - Put the private key at `secrets/kalshi_prod_key.pem` and set in `.env`:
      ```
@@ -30,15 +30,11 @@ Everything is built. This runbook is the server-side operation.
 ```bash
 doublezero multicast group list
 ```
-Note the **group code / multicast address** and the **mktdata + refdata ports** for the Kalshi feed (the same way `tiredsolid → 233.84.178.15` identified the Hyperliquid example feed in the reference). You supply these to the runner below.
+Note the **multicast address** and the **mktdata + refdata ports** for the Kalshi perps feed. You supply these to the runner below.
 
-## Step 2 — pick the Kalshi market(s)
+## Step 2 — pick the Kalshi perp(s)
 
-The public WS baseline needs Kalshi tickers to subscribe to. Find active BTC markets:
-```bash
-uv run python -m scripts.discover_markets --env prod
-```
-Pick an active ticker (e.g. an hourly `KXBTC-*`).
+The public WS baseline needs Kalshi perp tickers to subscribe to (e.g. `KXBTCPERP`, `KXETHPERP`).
 
 ## Step 3 — run the race
 
@@ -47,7 +43,7 @@ uv run python -m scripts.run_race \
   --minutes 10 \
   --market <KALSHI_TICKER> \
   --group <MULTICAST_ADDR> --mktdata-port <P1> --refdata-port <P2> \
-  --iface <RECEIVING_IP> \
+  --link doublezero1 \
   --out-dir data/race
 ```
 
@@ -57,13 +53,20 @@ matched N trades  (match rate ...%)
 p10 / p50 / p90 / p99 = ... ms     (negative = DoubleZero faster)
 report: data/race/race.png
 ```
-and writes the histogram + timeline PNG.
+and writes the histogram + timeline PNG plus `data/race/race_stats.json`.
 
-## Step 4 — the split-screen view (for recording)
+`--link doublezero1` captures via `AF_PACKET`, which is required on the DZ tunnel (a normal UDP multicast socket receives nothing there). `deploy/run_race.sh` wraps this with tunnel and config checks.
+
+## Live collectors (for the dashboard)
+
+Two long-running services feed the live web dashboard:
 
 ```bash
-uv run python -m race.live_tui     # left: public Kalshi WS BBO, right: DZ feed BBO, running delta
+sudo .venv/bin/python -m scripts.dz_live_feed    --link doublezero1 --group <ADDR> ...
+sudo .venv/bin/python -m scripts.dz_latency_race --ticker KXBTCPERP
 ```
+
+They write `data/dz_feed_state.json` and `data/dz_latency.json`, which `web/server.py` reads and serves. Both need `CAP_NET_RAW` for `AF_PACKET`; the latency race also needs the Kalshi PROD key in `.env`.
 
 ## Validate the tooling without any feed/key
 
@@ -72,8 +75,7 @@ uv run python -m scripts.run_race --selfcheck
 ```
 Builds a synthetic stream + a +3 ms delayed copy and confirms the matcher/stats recover exactly +3.000 ms (100% match). Proves the compute path independent of live data.
 
-## Safety
+## Notes
 
-- All order-placing code (the demo bot) targets the Kalshi **demo** environment only; the race places nothing.
 - Never commit `.env`, `secrets/`, or `data/` (all gitignored).
-- Publish latency numbers only from data reproducible by this repo (see `docs/methodology.md` once written).
+- Publish latency numbers only from data reproducible by this repo (see `docs/methodology.md`).

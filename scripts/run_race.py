@@ -26,7 +26,6 @@ from common.storage import read_frames
 from race.match import match_trades
 from race.report import render_report
 from race.stats import latency_stats
-from race.whatif import build_opportunities, whatif_stats
 from sources.dz_feed.capture import (
     DEFAULT_GROUP,
     DEFAULT_MKTDATA_PORT,
@@ -162,32 +161,7 @@ def _run_normal(args: argparse.Namespace) -> int:
     out_json = out_dir / "race_stats.json"
     out_json.write_bytes(orjson.dumps(race_stats))
     print(f"stats: {out_json}")
-
-    _write_whatif(out_dir, public_trades, dz_trades, window_ns)
     return 0
-
-
-def _write_whatif(out_dir: Path, public_trades: list, dz_trades: list, window_ns: float) -> None:
-    """Build + write the what-if counterfactual (data/race/whatif.json). Optional:
-    a run without a dz capture (dz_trades empty) still produces a valid,
-    honest {"n": 0} file rather than failing the race."""
-    try:
-        opportunities = build_opportunities(public_trades, dz_trades, window_ns=window_ns)
-        whatif = whatif_stats(opportunities)
-        whatif["samples"] = [
-            {
-                "delta_ms": round(o["delta_ns"] / 1e6, 3),
-                "edge_price": o["edge_price"],
-                "public_price": o["public_price"],
-                "edge_cents": round(o["public_price"] - o["edge_price"], 3),
-            }
-            for o in opportunities[:8]
-        ]
-        out_whatif = out_dir / "whatif.json"
-        out_whatif.write_bytes(orjson.dumps(whatif))
-        print(f"whatif: {out_whatif}")
-    except Exception as exc:  # noqa: BLE001 - what-if output is optional, never fail the race
-        _log.warning("what-if computation failed (non-fatal): %s", exc)
 
 
 def _synthetic_trade(i: int, base_t_ns: int) -> Frame:
