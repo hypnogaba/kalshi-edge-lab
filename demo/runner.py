@@ -39,9 +39,10 @@ import orjson
 
 from common.clock import now_ns
 from common.config import kalshi_prod
-from common.event import Event, Kind, Side, Source
+from common.event import Event, Kind
 from common.ws_client import ReconnectingWS
 from demo.fills import DEFAULT_MARKOUT_NS, Fill, GroundTruth, Scoreboard
+from demo.public_feed import PublicFeed
 from demo.strategy import FollowThePrint, Intent, StrategyConfig
 from sources.dz_feed.decoder import DzDecoder
 from sources.kalshi_ws.auth import KalshiSigner
@@ -50,7 +51,6 @@ _log = logging.getLogger(__name__)
 
 MARGIN_WS_URL = "wss://external-api-margin-ws.kalshi.com/trade-api/ws/v2/margin"
 MARGIN_WS_PATH = "/trade-api/ws/v2/margin"
-PUBLIC_PRICE_TO_DOLLARS = 10_000.0   # public "price" is dollars/1e4
 DZ_CONTRACT_SIZE = 0.0001            # DZ "size" is contracts * contract_size
 _ETH_P_IP = 0x0800
 _DUEL_TTL_NS = 30 * 1_000_000_000
@@ -227,6 +227,8 @@ async def _public_ws(state: DemoState) -> None:
     def headers() -> dict:
         return signer.headers("GET", MARGIN_WS_PATH)
 
+    feed = PublicFeed()
+
     async def on_message(raw) -> None:
         t = now_ns()
         try:
@@ -234,40 +236,13 @@ async def _public_ws(state: DemoState) -> None:
                                    else raw.encode())
         except Exception:  # noqa: BLE001 - non-JSON control frames
             return
-        for event in _public_events(payload, t):
+        for event in feed.on_message(payload, t):
             state.on_event(PUBLIC, event)
 
     sub = [{"id": 1, "cmd": "subscribe",
-            "params": {"channels": ["trade", "ticker"], "market_tickers": PERP_TICKERS}}]
+            "params": {"channels": ["trade", "orderbook_delta"],
+                       "market_tickers": PERP_TICKERS}}]
     await ReconnectingWS(MARGIN_WS_URL, headers, on_message, subscribe_msgs=sub).run()
-
-
-def _public_events(payload: dict, t_ns: int) -> list[Event]:
-    kind = payload.get("type")
-    msg = payload.get("msg") or {}
-    market = msg.get("market_ticker")
-    if not market:
-        return []
-    if kind == "trade":
-        return [Event(source=Source.MARGIN_WS, t_arrival_ns=t_ns, market=market,
-                      kind=Kind.TRADE,
-                      side=Side.BUY if msg.get("taker_side") == "yes" else Side.SELL,
-                      price=float(msg["price"]) * PUBLIC_PRICE_TO_DOLLARS,
-                      size=float(msg["count"]),
-                      exch_ts_ns=int(msg["ts_ms"]) * 1_000_000)]
-    if kind == "ticker":
-        out = []
-        for side, price_key, size_key in ((Side.BID, "bid", "bid_size"),
-                                          (Side.ASK, "ask", "ask_size")):
-            price = msg.get(price_key)
-            if price is None:
-                continue
-            out.append(Event(source=Source.MARGIN_WS, t_arrival_ns=t_ns, market=market,
-                             kind=Kind.QUOTE, side=side,
-                             price=float(price) * PUBLIC_PRICE_TO_DOLLARS,
-                             size=float(msg.get(size_key) or 0)))
-        return out
-    return []
 
 
 def _write_json(path: str, obj: dict) -> None:

@@ -3,10 +3,8 @@
 This is the claim the stream makes, so it gets a test that would fail if the
 pairing, the per-feed books, or the shared judging were wrong.
 """
-import pytest
-
 from common.event import Event, Kind, Side, Source
-from demo.runner import DZ, PUBLIC, DemoState, _public_events
+from demo.runner import DZ, PUBLIC, DemoState
 from demo.strategy import StrategyConfig
 
 MKT = "KXBTCPERP"
@@ -90,23 +88,3 @@ def test_each_bot_reads_its_own_book():
     snap = state.snapshot()
     assert snap["scoreboard"][DZ]["intents"] == 0
     assert snap["scoreboard"][PUBLIC]["intents"] == 1
-
-
-def test_public_trade_message_is_put_on_the_same_axes_as_the_dz_feed():
-    """The public feed scales price by 1e4 against the DZ feed's dollars, and
-    the demo compares prices across feeds, so a bad scale here would silently
-    break every duel. Scale factor is the one the live latency race matches on.
-    """
-    events = _public_events(
-        {"type": "trade", "msg": {"market_ticker": MKT, "price": 7.7827,
-                                  "count": 12, "taker_side": "yes", "ts_ms": 1700}},
-        t_ns=42)
-    assert len(events) == 1
-    event = events[0]
-    assert event.price == pytest.approx(77827.0) and event.size == 12
-    assert event.side is Side.BUY and event.exch_ts_ns == 1700 * MS
-
-
-def test_a_message_we_do_not_understand_is_dropped_quietly():
-    assert _public_events({"type": "ticker", "msg": {}}, t_ns=1) == []
-    assert _public_events({"type": "fill", "msg": {"market_ticker": MKT}}, t_ns=1) == []
