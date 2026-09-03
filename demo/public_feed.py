@@ -2,7 +2,12 @@
 
 Everything here was pinned against the live socket, not against the docs:
 
-- Numbers arrive as STRINGS ("7.7720", "13.00"), on a scale 1e4 below dollars.
+- Numbers arrive as STRINGS ("7.7720", "13.00"), and `price` is dollars per
+  CONTRACT, not per unit of the underlying. Dividing by the market's contract
+  size is what puts it on the DZ feed's axis. A flat 1e4 is right for BTC only
+  because its contract happens to be 1e-4; on ETH (contract 1e-3) it reported
+  the same $2,393.8 trade as $23,938, and the two copies of that trade then
+  failed to pair at all.
 - `taker_side` is "bid"/"ask", not "yes"/"no". Measured over 219 live trades:
   taker_side="bid" printed at or above the ask (an aggressive BUY) and never at
   or below the bid; taker_side="ask" printed at or below the bid. So bid -> BUY.
@@ -15,17 +20,28 @@ Everything here was pinned against the live socket, not against the docs:
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from common.event import Event, Kind, Side, Source
 
-PRICE_TO_DOLLARS = 10_000.0
 _BID, _ASK = "bid", "ask"
+
+# A market whose contract size is not known yet cannot be put on the DZ feed's
+# axis, so it is dropped rather than guessed.
+ContractSizeLookup = Callable[[str], float | None]
 
 
 class PublicFeed:
     """Stateful decoder: holds the public order book so it can emit top-of-book
-    quotes. One instance per connection."""
+    quotes. One instance per connection.
 
-    def __init__(self) -> None:
+    `contract_size` maps a market to the size of one contract in the
+    underlying; see sources/dz_feed/contract_sizes.py for where it comes from
+    and why both feeds need it.
+    """
+
+    def __init__(self, contract_size: ContractSizeLookup) -> None:
+        self._contract_size = contract_size
         self._levels: dict[str, dict[str, dict[float, float]]] = {}
         self._best: dict[str, tuple[float | None, float | None]] = {}
 
@@ -33,7 +49,7 @@ class PublicFeed:
         kind = payload.get("type")
         msg = payload.get("msg") or {}
         market = msg.get("market_ticker")
-        if not market:
+        if not market or self._contract_size(market) is None:
             return []
         if kind == "trade":
             return self._trade(market, msg, t_ns)
@@ -46,10 +62,9 @@ class PublicFeed:
             return self._delta(market, msg, t_ns)
         return []
 
-    @staticmethod
-    def _trade(market: str, msg: dict, t_ns: int) -> list[Event]:
+    def _trade(self, market: str, msg: dict, t_ns: int) -> list[Event]:
         try:
-            price = float(msg["price"]) * PRICE_TO_DOLLARS
+            price = float(msg["price"]) / self._contract_size(market)
             size = float(msg["count"])
             exch_ts_ns = int(msg["ts_ms"]) * 1_000_000
         except (KeyError, TypeError, ValueError):
@@ -94,11 +109,14 @@ class PublicFeed:
             size = book[_BID if side is Side.BID else _ASK][price]
             events.append(Event(source=Source.MARGIN_WS, t_arrival_ns=t_ns,
                                 market=market, kind=Kind.QUOTE, side=side,
-                                price=price * PRICE_TO_DOLLARS, size=size))
+                                price=price / self._contract_size(market), size=size))
         return events
 
     def best(self, market: str) -> tuple[float | None, float | None]:
-        """Best (bid, ask) in dollars, or (None, None). For diagnostics."""
+        """Best (bid, ask) in dollars per unit of underlying, or (None, None)."""
+        size = self._contract_size(market)
         bid, ask = self._best.get(market, (None, None))
-        return (bid * PRICE_TO_DOLLARS if bid is not None else None,
-                ask * PRICE_TO_DOLLARS if ask is not None else None)
+        if size is None:
+            return (None, None)
+        return (bid / size if bid is not None else None,
+                ask / size if ask is not None else None)

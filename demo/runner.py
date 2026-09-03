@@ -44,6 +44,7 @@ from common.ws_client import ReconnectingWS
 from demo.fills import DEFAULT_MARKOUT_NS, DEFAULT_REACTION_NS, Fill, GroundTruth, Scoreboard
 from demo.public_feed import PublicFeed
 from demo.strategy import FollowThePrint, Intent, StrategyConfig
+from sources.dz_feed.contract_sizes import ContractSizes
 from sources.dz_feed.decoder import DzDecoder
 from sources.kalshi_ws.auth import KalshiSigner
 
@@ -215,14 +216,13 @@ class DemoState:
 # so nothing downstream has to know which pipe an event came from.
 
 def _dz_reader(state: DemoState, group: str, ports: set[int], link: str,
-               stop: threading.Event) -> None:
+               sizes: ContractSizes, stop: threading.Event) -> None:
     group_bytes = bytes(int(x) for x in group.split("."))
     sock = socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(_ETH_P_IP))
     sock.bind((link, 0))
     sock.settimeout(0.5)
     decoder = DzDecoder()
     wanted = set(PERP_TICKERS)
-    contract_sizes: dict[str, float] = {}
     try:
         while not stop.is_set():
             try:
@@ -238,16 +238,12 @@ def _dz_reader(state: DemoState, group: str, ports: set[int], link: str,
             for event in decoder.decode(data[ihl + 8:], t):
                 if event.size is None or event.market not in wanted:
                     continue
-                contract_size = contract_sizes.get(event.market)
+                # Reference data arrives on the refdata port within seconds of
+                # joining. Until a market's contract size is known, neither feed
+                # can be put on a common axis, so it is skipped, not guessed.
+                contract_size = sizes.learn_from(decoder.registry, event.market)
                 if contract_size is None:
-                    instrument = decoder.registry.by_symbol(event.market)
-                    # Reference data arrives on the refdata port within seconds
-                    # of joining. Until it does, a market's sizes cannot be put
-                    # on the public feed's axes, so it is skipped rather than
-                    # guessed.
-                    if instrument is None or instrument.contract_size <= 0:
-                        continue
-                    contract_size = contract_sizes[event.market] = instrument.contract_size
+                    continue
                 state.on_event(DZ, _rescale_dz(event, contract_size))
     finally:
         sock.close()
@@ -262,14 +258,14 @@ def _rescale_dz(event: Event, contract_size: float) -> Event:
                  seq=event.seq, exch_ts_ns=event.exch_ts_ns)
 
 
-async def _public_ws(state: DemoState) -> None:
+async def _public_ws(state: DemoState, sizes: ContractSizes) -> None:
     cfg = kalshi_prod()
     signer = KalshiSigner(cfg.key_id, cfg.private_key_path)
 
     def headers() -> dict:
         return signer.headers("GET", MARGIN_WS_PATH)
 
-    feed = PublicFeed()
+    feed = PublicFeed(sizes.get)
 
     async def on_message(raw) -> None:
         t = now_ns()
@@ -308,12 +304,14 @@ async def _main(args: argparse.Namespace) -> None:
                        cooldown_ns=int(args.cooldown_s * 1e9)),
         markout_ns=int(args.markout_ms * 1e6),
         reaction_ns=int(args.reaction_ms * 1e6))
+    sizes = ContractSizes()
     stop = threading.Event()
     reader = threading.Thread(target=_dz_reader, daemon=True, args=(
-        state, args.group, {args.mktdata_port, args.refdata_port}, args.link, stop))
+        state, args.group, {args.mktdata_port, args.refdata_port}, args.link,
+        sizes, stop))
     reader.start()
     try:
-        await asyncio.gather(_public_ws(state),
+        await asyncio.gather(_public_ws(state, sizes),
                              _writer(state, args.out, args.flush_ms))
     finally:
         stop.set()
