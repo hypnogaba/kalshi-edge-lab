@@ -34,6 +34,11 @@ import orjson
 
 from dataclasses import dataclass
 
+try:  # numpy arrives via matplotlib; the pure-Python path below is equivalent
+    import numpy as _np
+except ImportError:  # pragma: no cover - exercised by the fallback test
+    _np = None
+
 from common.clock import clock_offset_ms, now_ns, wall_ns
 from common.config import kalshi_prod
 from common.event import Kind
@@ -78,9 +83,62 @@ PERP_TICKERS = [
 ]
 
 
+_PCT_POINTS = (0.10, 0.50, 0.90, 0.95, 0.99)
+
+
+def _index_for(p: float, m: int) -> int:
+    """The rank this code has always called the p-th percentile."""
+    return min(m - 1, int(m * p))
+
+
+def _summarise(values: list) -> dict | None:
+    """Percentiles, extremes and mean over `values`, skipping None.
+
+    numpy is used when importable, and not for speed alone: CPython's sort
+    holds the GIL for the whole call, so summarising a full day of samples
+    stalls every other thread for tens of milliseconds at a stretch -- and one
+    of those threads is where the public feed's arrival gets stamped, which
+    would quietly charge our own bookkeeping to the feed we are measuring
+    against. np.partition releases the GIL and is O(n) besides.
+
+    Both paths return identical numbers: the same integer ranks, no
+    interpolation. `test_numpy_and_pure_python_summaries_agree` holds them to
+    that.
+    """
+    clean = [v for v in values if v is not None]
+    m = len(clean)
+    if not m:
+        return None
+    ranks = {p: _index_for(p, m) for p in _PCT_POINTS}
+
+    if _np is not None:
+        arr = _np.asarray(clean, dtype=float)
+        wanted = sorted({*ranks.values(), 0, m - 1})
+        part = _np.partition(arr, wanted)
+        pick = {p: float(part[r]) for p, r in ranks.items()}
+        lo, hi, mean = float(part[0]), float(part[m - 1]), float(arr.mean())
+    else:
+        ordered = sorted(clean)
+        pick = {p: ordered[r] for p, r in ranks.items()}
+        lo, hi, mean = ordered[0], ordered[-1], sum(ordered) / m
+
+    return {"n": m,
+            "p10_ms": round(pick[0.10], 3), "p50_ms": round(pick[0.50], 3),
+            "p90_ms": round(pick[0.90], 3), "p95_ms": round(pick[0.95], 3),
+            "p99_ms": round(pick[0.99], 3),
+            "avg_ms": round(mean, 3),
+            "min_ms": round(lo, 3), "max_ms": round(hi, 3)}
+
+
 def _match_key(market: str, dollars: float, contracts: float, exch_ms: int) -> tuple:
     return (market, exch_ms, round(dollars), round(contracts))
 
+
+# A trade cannot reach us before the venue stamped it, and nothing on this
+# route has ever honestly taken half a second. Outside this band the wall
+# clock moved, not the packet.
+_MIN_PLAUSIBLE_MS = 0.0
+_MAX_PLAUSIBLE_MS = 5_000.0
 
 _HIST_LO_MS = 45.0
 _HIST_HI_MS = 95.0
@@ -143,22 +201,34 @@ class RaceState:
         # for its twin on the other feed.
         self._dz: dict[tuple, Half] = {}
         self._pub: dict[tuple, Half] = {}
-        self._deltas: deque[tuple[int, float]] = deque()  # (mono_ns, delta_ms)
+        # Samples land in the HOT deques, which the feed threads append to under
+        # the lock, and are drained into the WIN deques, which only snapshot()
+        # touches and which therefore need no lock at all. Draining is a pointer
+        # swap, so the time a feed thread can wait behind a flush no longer
+        # grows with the window: at a full day it was ~0.2 s per flush just to
+        # copy, and a stalled event loop is charged to the public feed as
+        # latency -- the measurement would have been inflating its own result.
+        self._deltas_hot: deque[tuple[int, float]] = deque()  # (mono_ns, delta_ms)
+        self._deltas_win: deque[tuple[int, float]] = deque()
         # Absolute legs, recorded only on MATCHED pairs so the DoubleZero and
         # public numbers describe the identical set of trades. Each entry:
         # (mono_ns, dz_total_ms, pub_total_ms, dz_transport_ms|None,
         #  exch_to_pub_ms|None)
-        self._abs: deque[tuple[int, float, float, float | None, float | None]] = deque()
+        self._abs_hot: deque[tuple[int, float, float, float | None, float | None]] = deque()
+        self._abs_win: deque[tuple[int, float, float, float | None, float | None]] = deque()
         self._window_ns = int(window_min * 60 * 1e9)
         self.dz_seen = 0
         self.pub_seen = 0
         self.matched = 0
+        # Samples rejected as clock artefacts; surfaced so a silent
+        # drop can never be mistaken for a clean measurement.
+        self.implausible = 0
         # Matches per market, so "all perps" can be checked rather than claimed.
         self.matched_by_market: Counter[str] = Counter()
 
     def _record(self, key: tuple, dz: "Half", pub: "Half") -> None:
         now = now_ns()
-        self._deltas.append((now, (dz.mono_ns - pub.mono_ns) / 1e6))
+        self._deltas_hot.append((now, (dz.mono_ns - pub.mono_ns) / 1e6))
         self.matched += 1
         self.matched_by_market[key[0]] += 1
 
@@ -170,11 +240,21 @@ class RaceState:
             return
         dz_total = (dz.wall_ns - dz.exch_ts_ns) / 1e6
         pub_total = (pub.wall_ns - pub.exch_ts_ns) / 1e6
+        # A wall clock can be stepped -- by chrony after a long outage, by a
+        # hypervisor resuming a paused guest. One stepped sample would sit in
+        # the window for a full day and own the max and the 99th percentile,
+        # so anything physically impossible is dropped and counted instead.
+        # Nothing legitimate is near these bounds: the floor for this route is
+        # ~43 ms and the worst honest sample seen is under half a second.
+        if not (_MIN_PLAUSIBLE_MS <= dz_total <= _MAX_PLAUSIBLE_MS
+                and _MIN_PLAUSIBLE_MS <= pub_total <= _MAX_PLAUSIBLE_MS):
+            self.implausible += 1
+            return
         transport = exch_to_pub = None
         if dz.pub_ts_ns:
             transport = (dz.wall_ns - dz.pub_ts_ns) / 1e6
             exch_to_pub = (dz.pub_ts_ns - dz.exch_ts_ns) / 1e6
-        self._abs.append((now, dz_total, pub_total, transport, exch_to_pub))
+        self._abs_hot.append((now, dz_total, pub_total, transport, exch_to_pub))
 
     def add_dz(self, key: tuple, half: "Half") -> None:
         with self._lock:
@@ -194,86 +274,103 @@ class RaceState:
             else:
                 self._pub[key] = half
 
-    def _evict(self, now: int) -> None:
-        cutoff = now - self._window_ns
-        while self._deltas and self._deltas[0][0] < cutoff:
-            self._deltas.popleft()
-        while self._abs and self._abs[0][0] < cutoff:
-            self._abs.popleft()
+    def _expire_pending(self, now: int) -> None:
+        """Drop half-trades whose twin never arrived. Caller holds the lock;
+        this is bounded by the number of unmatched halves, not by the window."""
         ttl = now - _KEY_TTL_NS
         for d in (self._dz, self._pub):
             for k in [k for k, v in d.items() if v.mono_ns < ttl]:
                 del d[k]
 
-    def snapshot(self, window_min: float) -> dict:
-        with self._lock:
-            now = now_ns()
-            self._evict(now)
-            deltas = sorted(d for _, d in self._deltas)
-            n = len(deltas)
-            out = {
-                "updated_at": time.time(),
-                "window_min": window_min,
-                "n": n,
-                "dz_seen": self.dz_seen,
-                "pub_seen": self.pub_seen,
-                "matched_total": self.matched,
-                "matched_markets": len(self.matched_by_market),
-                "matched_by_market": dict(self.matched_by_market.most_common(20)),
-            }
-            if n:
-                def pct(p: float) -> float:
-                    return round(deltas[min(n - 1, int(n * p))], 3)
-                wins = sum(1 for d in deltas if d < 0)
-                out.update({
-                    "p10_ms": pct(0.10), "p50_ms": pct(0.50),
-                    "p90_ms": pct(0.90), "p95_ms": pct(0.95),
-                    "min_ms": round(deltas[0], 3), "max_ms": round(deltas[-1], 3),
-                    # win_rate: % of matched trades DoubleZero delivered first
-                    "win_rate": round(100.0 * wins / n, 1),
-                    # median milliseconds sooner (positive number for the UI)
-                    "sooner_p50_ms": round(-pct(0.50), 3),
-                })
-            out["absolute"] = self._absolute_block()
-            # Last matched trades in arrival order, for the live win-strip:
-            # d = delta ms (dz-public), w = DoubleZero arrived first.
-            out["recent"] = [{"d": round(d, 2), "w": d < 0}
-                             for _, d in list(self._deltas)[-90:]]
-            return out
+    def _age_out(self, now: int) -> None:
+        """Drop samples that fell out of the rolling window. Lock-free: only
+        snapshot() ever touches the WIN deques."""
+        cutoff = now - self._window_ns
+        while self._deltas_win and self._deltas_win[0][0] < cutoff:
+            self._deltas_win.popleft()
+        while self._abs_win and self._abs_win[0][0] < cutoff:
+            self._abs_win.popleft()
 
-    def _absolute_block(self) -> dict:
+    def snapshot(self, window_min: float) -> dict:
+        """Summarise the window. Copies under the lock, computes outside it.
+
+        Sorting a day of samples takes ~800 ms at a full 24h window, and
+        holding the lock across that stalls both feed threads. The DoubleZero
+        arrival stamp comes from the kernel and survives a stall, but the
+        public WebSocket is stamped in `on_message`, so a stalled event loop
+        is charged to the public feed as latency -- the measurement would have
+        been inflating the very gap it exists to report. So: take copies while
+        locked, then do every sort, percentile and subprocess call unlocked.
+        """
+        now = now_ns()
+        with self._lock:
+            # Two pointer swaps and a bounded sweep: everything else waits.
+            hot_deltas, self._deltas_hot = self._deltas_hot, deque()
+            hot_abs, self._abs_hot = self._abs_hot, deque()
+            self._expire_pending(now)
+            counters = (self.dz_seen, self.pub_seen, self.matched,
+                        self.implausible, len(self.matched_by_market),
+                        dict(self.matched_by_market.most_common(20)))
+
+        self._deltas_win.extend(hot_deltas)
+        self._abs_win.extend(hot_abs)
+        self._age_out(now)
+        deltas = [d for _, d in self._deltas_win]
+        abs_rows = list(self._abs_win)
+        recent = [{"d": round(d, 2), "w": d < 0}
+                  for _, d in list(self._deltas_win)[-90:]]
+
+        dz_seen, pub_seen, matched, implausible, market_count, by_market = counters
+        n = len(deltas)
+        summary = _summarise(deltas)
+        out = {
+            "updated_at": time.time(),
+            "window_min": window_min,
+            "n": n,
+            "dz_seen": dz_seen,
+            "pub_seen": pub_seen,
+            "matched_total": matched,
+            "implausible_dropped": implausible,
+            "matched_markets": market_count,
+            "matched_by_market": by_market,
+        }
+        if summary:
+            if _np is not None:
+                wins = int((_np.asarray(deltas, dtype=float) < 0).sum())
+            else:
+                wins = sum(1 for d in deltas if d < 0)
+            out.update({
+                "p10_ms": summary["p10_ms"], "p50_ms": summary["p50_ms"],
+                "p90_ms": summary["p90_ms"], "p95_ms": summary["p95_ms"],
+                "min_ms": summary["min_ms"], "max_ms": summary["max_ms"],
+                # win_rate: % of matched trades DoubleZero delivered first
+                "win_rate": round(100.0 * wins / n, 1),
+                # median milliseconds sooner (positive number for the UI)
+                "sooner_p50_ms": round(-summary["p50_ms"], 3),
+            })
+        out["absolute"] = self._absolute_block(abs_rows)
+        # Last matched trades in arrival order, for the live win-strip:
+        # d = delta ms (dz-public), w = DoubleZero arrived first.
+        out["recent"] = recent
+        return out
+
+    @staticmethod
+    def _absolute_block(rows: list) -> dict:
         """End-to-end time from the venue's own stamp to this host, per feed.
 
-        Unlike the head-to-head delta this leans on wall clocks, so it ships
-        with the clock quality that produced it. Callers must hold the lock.
+        Takes an already-copied list so it can run without the lock: it sorts
+        four series and shells out to chrony, none of which a feed thread
+        should ever wait behind.
         """
-        n = len(self._abs)
+        n = len(rows)
         block: dict = {"n": n, "clock": clock_offset_ms()}
         if not n:
             return block
 
-        def pcts(vals: list[float]) -> dict | None:
-            vals = sorted(v for v in vals if v is not None)
-            if not vals:
-                return None
-            m = len(vals)
-
-            def at(p: float) -> float:
-                return round(vals[min(m - 1, int(m * p))], 3)
-
-            # P50/P90/P95/P99 are the percentiles DoubleZero's own scoreboard
-            # reports, and the tail is the half of a latency figure that a
-            # median alone hides.
-            return {"n": m, "p10_ms": at(0.10), "p50_ms": at(0.50),
-                    "p90_ms": at(0.90), "p95_ms": at(0.95), "p99_ms": at(0.99),
-                    "avg_ms": round(sum(vals) / m, 3),
-                    "min_ms": round(vals[0], 3), "max_ms": round(vals[-1], 3)}
-
-        rows = list(self._abs)
-        block["dz_total"] = pcts([r[1] for r in rows])
-        block["public_total"] = pcts([r[2] for r in rows])
-        block["dz_transport"] = pcts([r[3] for r in rows])
-        block["exch_to_pub"] = pcts([r[4] for r in rows])
+        block["dz_total"] = _summarise([r[1] for r in rows])
+        block["public_total"] = _summarise([r[2] for r in rows])
+        block["dz_transport"] = _summarise([r[3] for r in rows])
+        block["exch_to_pub"] = _summarise([r[4] for r in rows])
         block["hist"] = _histogram([r[1] for r in rows], [r[2] for r in rows])
         return block
 
@@ -373,9 +470,16 @@ def _write_json(path: str, obj: dict) -> None:
 
 async def _flush_loop(state: RaceState, out_path: str, flush_ms: int,
                       window_min: float, meta: dict) -> None:
+    def build_and_write() -> None:
+        _write_json(out_path, {**meta, **state.snapshot(window_min)})
+
     while True:
-        snap = {**meta, **state.snapshot(window_min)}
-        await asyncio.to_thread(_write_json, out_path, snap)
+        # snapshot() sorts the whole window. Run on the event loop it blocks
+        # the public WebSocket handler, and since that handler is where the
+        # public feed's arrival is stamped, the delay is charged to the public
+        # feed as latency -- the flush would be widening the very gap it
+        # reports. Off the loop it goes, together with the write.
+        await asyncio.to_thread(build_and_write)
         await asyncio.sleep(flush_ms / 1000.0)
 
 

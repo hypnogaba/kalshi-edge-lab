@@ -536,7 +536,7 @@ _PAGE_HTML = """<!doctype html>
     if(peak <= 0) return '';
     var plotW = W - PAD_L - PAD_R, bw = plotW / n;
 
-    function row(bins, over, y, colour, label){
+    function row(bins, over, under, y, colour, label){
       var s = '<text x="' + (PAD_L - 10) + '" y="' + (y + ROW - 4) +
               '" text-anchor="end" class="hx" fill="var(--muted)">' + label + '</text>';
       for(var i = 0; i < n; i++){
@@ -548,15 +548,21 @@ _PAGE_HTML = """<!doctype html>
              (h.lo_ms + i * h.width_ms).toFixed(0) + '–' +
              (h.lo_ms + (i + 1) * h.width_ms).toFixed(0) + ' ms: ' + bins[i] + '</title></rect>';
       }
+      // Samples off either end are labelled, never dropped: an axis chosen
+      // for readability must not be able to hide a tail.
       if(over > 0){
         s += '<text x="' + (W - PAD_R + 5) + '" y="' + (y + ROW - 1) +
              '" class="hx" fill="' + colour + '">+' + over + '</text>';
       }
+      if(under > 0){
+        s += '<text x="' + (PAD_L - 5) + '" y="' + (y + ROW - 1) +
+             '" text-anchor="end" class="hx" fill="' + colour + '">' + under + '+</text>';
+      }
       return s;
     }
 
-    var g = row(h.dz, h.dz_over, 0, 'var(--accent)', 'DoubleZero');
-    g += row(h.public, h.public_over, ROW + GAP, 'var(--faint)', 'public WS');
+    var g = row(h.dz, h.dz_over, h.dz_under, 0, 'var(--accent)', 'DoubleZero');
+    g += row(h.public, h.public_over, h.public_under, ROW + GAP, 'var(--faint)', 'public WS');
 
     var axisY = ROW * 2 + GAP;
     g += '<line x1="' + PAD_L + '" y1="' + axisY + '" x2="' + (W - PAD_R) +
