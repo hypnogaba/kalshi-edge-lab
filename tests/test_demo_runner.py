@@ -3,6 +3,8 @@
 This is the claim the stream makes, so it gets a test that would fail if the
 pairing, the per-feed books, or the shared judging were wrong.
 """
+import pytest
+
 from common.event import Event, Kind, Side, Source
 from demo.runner import DZ, PUBLIC, DemoState
 from demo.strategy import StrategyConfig
@@ -88,3 +90,13 @@ def test_each_bot_reads_its_own_book():
     snap = state.snapshot()
     assert snap["scoreboard"][DZ]["intents"] == 0
     assert snap["scoreboard"][PUBLIC]["intents"] == 1
+
+
+def test_an_unverified_market_is_ignored_entirely():
+    """A market whose contract size has not been measured across both feeds
+    would give the two bots different thresholds, so it must not reach a bot."""
+    from demo.runner import CONTRACT_SIZE, _rescale_dz
+
+    assert "KXBTCPERP" in CONTRACT_SIZE
+    event = trade(Source.DZ_FEED, 1 * MS, 500_000, price=77756.0, size=0.0014)
+    assert _rescale_dz(event).size == pytest.approx(14.0), "underlying -> contracts"

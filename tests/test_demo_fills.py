@@ -97,3 +97,26 @@ def test_scoreboard_counts_what_it_says():
     board.add(truth.settle(buy_intent(7 * MS)))
     assert board.intents == 2 and board.fills == 1 and board.missed == 1
     assert board.as_dict()["fill_rate"] == 50.0
+
+
+def test_reaction_time_means_a_bot_can_lose_the_quote_it_just_saw():
+    """Without a reaction delay the fastest bot is judged on the very snapshot it
+    acted on and fills every time, which is a structural 100% that measures
+    nothing. The quote here is pulled 2 ms after the decision."""
+    truth = GroundTruth()
+    truth.record(book(0, 100.0, 100.5))
+    truth.record(book(2 * MS, 100.0, 101.0))
+
+    assert truth.settle(buy_intent(0), reaction_ns=0).filled
+    assert not truth.settle(buy_intent(0), reaction_ns=5 * MS).filled
+
+
+def test_reaction_time_does_not_change_the_gap_between_the_two_bots():
+    """It is applied to both bots, so it must shift them together, never tilt
+    the comparison."""
+    truth = GroundTruth()
+    truth.record(book(0, 100.0, 100.5))
+    truth.record(book(4 * MS, 100.0, 101.0))
+    reaction = 1 * MS
+    assert truth.settle(buy_intent(0), reaction_ns=reaction).filled
+    assert not truth.settle(buy_intent(7 * MS), reaction_ns=reaction).filled

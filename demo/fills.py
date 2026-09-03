@@ -16,10 +16,15 @@ gone by the time it decided.
 
 Honesty / limitations (read before citing a number from this module)
 --------------------------------------------------------------------
-- Paper fills. No queue position, no exchange latency on the order itself, no
-  fees, no partial fills, no size limits beyond the quoted size, and no market
-  impact. Both bots get the same free pass, so the COMPARISON is meaningful even
-  though the absolute P&L is not a promise of anything.
+- Paper fills. No queue position, no fees, no partial fills, no size limits
+  beyond the quoted size, and no market impact. Both bots get the same free
+  pass, so the COMPARISON is meaningful even though the absolute P&L is not a
+  promise of anything.
+- Every intent is judged `reaction_ns` AFTER the bot decided, not at the instant
+  it decided. Without that, the DoubleZero bot is judged against the very book
+  snapshot it just acted on and fills essentially always -- a structural 100%
+  that flatters us and measures nothing. The same reaction is applied to both
+  bots, so the gap between them stays exactly the feed delta.
 - The mark-out horizon is arbitrary. It is a way to say "was that a good price
   shortly after", not a claim about a real exit.
 - A bot is charged nothing for intents that miss. Missing is free here; in the
@@ -35,6 +40,7 @@ from demo.book import TopOfBook
 from demo.strategy import Intent
 
 DEFAULT_MARKOUT_NS = 1_000_000_000  # 1 s
+DEFAULT_REACTION_NS = 1_000_000     # 1 ms: decide, build the order, put it on the wire
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,9 +86,12 @@ class GroundTruth:
             return None
         return self._books[market][idx]
 
-    def settle(self, intent: Intent, markout_ns: int = DEFAULT_MARKOUT_NS) -> Fill:
-        """Judge one intent against the shared book."""
-        book = self.state_at(intent.market, intent.t_decided_ns)
+    def settle(self, intent: Intent, markout_ns: int = DEFAULT_MARKOUT_NS,
+               reaction_ns: int = DEFAULT_REACTION_NS) -> Fill:
+        """Judge one intent against the shared book, as of the moment the order
+        could actually have reached the venue."""
+        t_arrives_ns = intent.t_decided_ns + reaction_ns
+        book = self.state_at(intent.market, t_arrives_ns)
         if book is None:
             return Fill(intent=intent, filled=False, price=None, reason="no_book")
 
@@ -97,7 +106,7 @@ class GroundTruth:
                 return Fill(intent=intent, filled=False, price=None, reason="quote_gone")
             price = max(quote, intent.limit_price)
 
-        later = self.state_at(intent.market, intent.t_decided_ns + markout_ns)
+        later = self.state_at(intent.market, t_arrives_ns + markout_ns)
         markout = None
         if later is not None and later.mid is not None:
             markout = later.mid - price if intent.side is Side.BUY else price - later.mid

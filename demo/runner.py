@@ -41,7 +41,7 @@ from common.clock import now_ns
 from common.config import kalshi_prod
 from common.event import Event, Kind
 from common.ws_client import ReconnectingWS
-from demo.fills import DEFAULT_MARKOUT_NS, Fill, GroundTruth, Scoreboard
+from demo.fills import DEFAULT_MARKOUT_NS, DEFAULT_REACTION_NS, Fill, GroundTruth, Scoreboard
 from demo.public_feed import PublicFeed
 from demo.strategy import FollowThePrint, Intent, StrategyConfig
 from sources.dz_feed.decoder import DzDecoder
@@ -51,15 +51,18 @@ _log = logging.getLogger(__name__)
 
 MARGIN_WS_URL = "wss://external-api-margin-ws.kalshi.com/trade-api/ws/v2/margin"
 MARGIN_WS_PATH = "/trade-api/ws/v2/margin"
-DZ_CONTRACT_SIZE = 0.0001            # DZ "size" is contracts * contract_size
 _ETH_P_IP = 0x0800
 _DUEL_TTL_NS = 30 * 1_000_000_000
 
-PERP_TICKERS = [
-    "KXBTCPERP", "KXETHPERP", "KXSOLPERP", "KXXRPPERP", "KXBCHPERP", "KXDOGEPERP",
-    "KXHYPEPERP", "KXKSHIBPERP", "KXLINKPERP", "KXLTCPERP", "KXNEARPERP",
-    "KXSUIPERP", "KXZECPERP",
-]
+# Only markets whose contract size has been VERIFIED against both feeds belong
+# here. The DZ feed reports trade size in the underlying, the public feed in
+# contracts, and the ratio between them is the market's contract size. Measured
+# on live matched trades: KXBTCPERP = 1e-4 exactly (40 matches). Assuming that
+# constant holds everywhere gives the two bots different effective thresholds on
+# every other market, which would quietly rig the comparison -- so a market
+# stays out until its ratio is measured the same way.
+CONTRACT_SIZE = {"KXBTCPERP": 1e-4}
+PERP_TICKERS = sorted(CONTRACT_SIZE)
 
 DZ = "doublezero"
 PUBLIC = "public"
@@ -107,9 +110,11 @@ class DemoState:
     """Everything the two bots share. Guarded by one lock; the DZ reader runs in
     a thread and the public WS in the event loop."""
 
-    def __init__(self, config: StrategyConfig, markout_ns: int) -> None:
+    def __init__(self, config: StrategyConfig, markout_ns: int,
+                 reaction_ns: int = DEFAULT_REACTION_NS) -> None:
         self._lock = threading.Lock()
         self._markout_ns = markout_ns
+        self._reaction_ns = reaction_ns
         self.truth = GroundTruth()
         self.bots = {DZ: FollowThePrint(config), PUBLIC: FollowThePrint(config)}
         self.boards = {DZ: Scoreboard(DZ), PUBLIC: Scoreboard(PUBLIC)}
@@ -138,9 +143,10 @@ class DemoState:
         changes nothing about it."""
         now = now_ns()
         with self._lock:
-            while self._pending and now - self._pending[0][1].t_decided_ns > self._markout_ns:
+            horizon = self._markout_ns + self._reaction_ns
+            while self._pending and now - self._pending[0][1].t_decided_ns > horizon:
                 name, intent, key = self._pending.popleft()
-                fill = self.truth.settle(intent, self._markout_ns)
+                fill = self.truth.settle(intent, self._markout_ns, self._reaction_ns)
                 self.boards[name].add(fill)
                 duel = self._duels.get(key)
                 if duel is None:
@@ -172,6 +178,7 @@ class DemoState:
                 "uptime_s": round((now_ns() - self.started_ns) / 1e9, 1),
                 "mode": "paper",
                 "markout_ms": self._markout_ns / 1e6,
+                "reaction_ms": self._reaction_ns / 1e6,
                 "events": dict(self.counts),
                 "scoreboard": {name: board.as_dict() for name, board in self.boards.items()},
                 "head_to_head": head_to_head,
@@ -203,7 +210,7 @@ def _dz_reader(state: DemoState, group: str, ports: set[int], link: str,
                 continue
             t = now_ns()
             for event in decoder.decode(data[ihl + 8:], t):
-                if not isinstance(event.market, str) or not event.market.endswith("PERP"):
+                if event.market not in CONTRACT_SIZE:
                     continue
                 if event.size is None:
                     continue
@@ -213,10 +220,11 @@ def _dz_reader(state: DemoState, group: str, ports: set[int], link: str,
 
 
 def _rescale_dz(event: Event) -> Event:
-    """DZ sizes are contracts * contract_size; put them back into contracts."""
+    """DZ sizes are in the underlying; the public feed counts contracts. Put the
+    DZ side onto contracts so both bots read one threshold the same way."""
     return Event(source=event.source, t_arrival_ns=event.t_arrival_ns,
                  market=event.market, kind=event.kind, price=event.price,
-                 size=event.size / DZ_CONTRACT_SIZE, side=event.side,
+                 size=event.size / CONTRACT_SIZE[event.market], side=event.side,
                  seq=event.seq, exch_ts_ns=event.exch_ts_ns)
 
 
@@ -264,7 +272,8 @@ async def _main(args: argparse.Namespace) -> None:
         StrategyConfig(min_print_size=args.min_print_size, order_size=args.order_size,
                        max_position=args.max_position,
                        cooldown_ns=int(args.cooldown_s * 1e9)),
-        markout_ns=int(args.markout_ms * 1e6))
+        markout_ns=int(args.markout_ms * 1e6),
+        reaction_ns=int(args.reaction_ms * 1e6))
     stop = threading.Event()
     reader = threading.Thread(target=_dz_reader, daemon=True, args=(
         state, args.group, {args.mktdata_port, args.refdata_port}, args.link, stop))
@@ -286,6 +295,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--out", default="data/demo_state.json")
     ap.add_argument("--flush-ms", type=int, default=500)
     ap.add_argument("--markout-ms", type=float, default=DEFAULT_MARKOUT_NS / 1e6)
+    ap.add_argument("--reaction-ms", type=float, default=DEFAULT_REACTION_NS / 1e6,
+                    help="Time between deciding and the order reaching the venue. "
+                         "Applied identically to both bots; without it the "
+                         "DoubleZero bot is judged on the very book snapshot it "
+                         "just acted on and fills ~always")
     ap.add_argument("--min-print-size", type=float, default=50.0)
     ap.add_argument("--order-size", type=int, default=1)
     ap.add_argument("--max-position", type=int, default=5)
