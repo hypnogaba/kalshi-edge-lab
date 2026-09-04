@@ -120,14 +120,20 @@ class DemoState:
 
     def __init__(self, config: StrategyConfig, markout_ns: int,
                  reaction_ns: int = DEFAULT_REACTION_NS,
-                 window_min: float = DEFAULT_WINDOW_MIN,
-                 tick_of: Callable[[str], float | None] | None = None) -> None:
+                 window_min: float = DEFAULT_WINDOW_MIN, *,
+                 tick_of: Callable[[str], float | None]) -> None:
         self._lock = threading.Lock()
         # Both bots' decisions are paired on the print they reacted to, and the
-        # key quantises the price by the market's own tick. Supplied by the DZ
+        # key quantises the price by the market's own tick. It comes from the DZ
         # reference data, which is also what puts the two feeds on one axis, so
         # an event that got this far always has one.
-        self._tick_of = tick_of or (lambda _market: None)
+        #
+        # Required, and keyword-only, deliberately. Defaulting it to "no ticks
+        # known" costs nothing at startup and then silently pairs NOTHING: every
+        # duel is dropped, both fill rates read 0, and the demo looks quiet
+        # rather than broken. A missing argument should stop the process, not
+        # empty the scoreboard.
+        self._tick_of = tick_of
         self._markout_ns = markout_ns
         self._reaction_ns = reaction_ns
         self._window_ns = int(window_min * 60 * 1e9)

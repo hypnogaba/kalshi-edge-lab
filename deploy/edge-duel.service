@@ -1,0 +1,45 @@
+# ────────────────────────────────────────────────────────────────────────
+# kalshi-edge-lab — the two-bot duel (demo.runner).
+#
+# Runs the SAME strategy twice in one process on one clock, one instance fed by
+# the DoubleZero edge feed and one by Kalshi's public perps WebSocket, and pairs
+# their decisions onto the same print. Writes data/demo_state.json.
+#
+# PAPER ONLY. This unit places no orders and holds no keys beyond the read-only
+# Kalshi market-data key already in .env.
+#
+# This is a TEMPLATE: replace <REPO_PATH> with the absolute repo path.
+#
+# Install (run from the repo root, as root — AF_PACKET needs privileges):
+#   sed -e "s|<REPO_PATH>|$(pwd)|g" deploy/edge-duel.service \
+#       | sudo tee /etc/systemd/system/edge-duel.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now edge-duel
+#
+# Manage:  systemctl status edge-duel ; journalctl -u edge-duel -f
+#
+# Prereq: the DZ tunnel must be up first —
+#   doublezero connect multicast --subscribe-feed kalshi-perps-tob-fra
+# ────────────────────────────────────────────────────────────────────────
+
+[Unit]
+Description=kalshi-edge-lab two-bot duel (DoubleZero vs public, paper only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=<REPO_PATH>
+EnvironmentFile=-<REPO_PATH>/.env
+ExecStart=<REPO_PATH>/.venv/bin/python -m demo.runner \
+    --link doublezero1 --group 233.84.178.3 \
+    --mktdata-port 31000 --refdata-port 41000 \
+    --min-print-size 1 --cooldown-s 0.5 \
+    --out data/demo_state.json
+AmbientCapabilities=CAP_NET_RAW
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
