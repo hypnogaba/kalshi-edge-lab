@@ -69,10 +69,11 @@ DUEL_HTML = """<!doctype html>
        font-size:clamp(38px, 5vw, 56px); line-height:1.05; letter-spacing:-.03em;
        margin:10px 0 6px}
   .side.fast .big{color:var(--win)}
-  /* text-wrap:pretty keeps the last word off a line of its own; without it both
-     of these captions ended on an orphan. */
-  .unit{color:var(--faint); font-size:13px; line-height:1.5; max-width:34ch;
-        text-wrap:pretty}
+  /* No max-width: the cell already sets the measure, and capping it at 34ch was
+     what broke the left caption onto a second line while the right one, four
+     characters shorter, stayed on one. text-wrap:pretty handles the narrow
+     screens, where both do wrap. */
+  .unit{color:var(--faint); font-size:13px; line-height:1.5; text-wrap:pretty}
   /* Same three-part structure as the two sides -- label, number, qualifier -- so
      the three numbers land on one line. Centring this cell on its own put the
      head start on a baseline of its own, half a line above the two rates it
@@ -104,9 +105,10 @@ DUEL_HTML = """<!doctype html>
   h3{font-family:"Archivo"; font-weight:700; font-size:16px; margin:32px 0 10px}
   table{width:100%; border-collapse:collapse; font-family:"IBM Plex Mono"; font-size:13px}
   th,td{text-align:left; padding:8px 14px; border-bottom:1px solid var(--line); white-space:nowrap}
-  /* The two verdict columns carry the story, so they get the room; market and
-     numbers are as narrow as their content. */
-  th:nth-child(4),td:nth-child(4),th:nth-child(5),td:nth-child(5){width:34%}
+  /* The two verdict columns are the comparison, so they sit next to each other.
+     At 34% each they were far enough apart that the eye read them as two
+     separate columns rather than as one row's two answers. */
+  th:nth-child(4),td:nth-child(4),th:nth-child(5),td:nth-child(5){width:21%}
   th{font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); font-weight:500}
   td.num,th.num{text-align:right; font-variant-numeric:tabular-nums}
   tr:last-child td{border-bottom:0}
