@@ -51,12 +51,17 @@ number, and is published next to the counts it produced. See
 
 ## Live dashboard
 
+**Running now: [edge-kalshi.84-247-179-222.nip.io](https://edge-kalshi.84-247-179-222.nip.io)**
+— one host at DoubleZero's Frankfurt edge, measuring continuously.
+
 [`web/server.py`](web/server.py) is a read-only FastAPI + SSE app serving two self-contained,
 monochrome pages. It never places orders or touches funds.
 
-- `/` — the benchmark: how much sooner the data arrives, and how long the trip takes, plus the
-  live decoded feed for every Kalshi crypto perpetual.
-- `/duel` — the demo: what that head start actually buys.
+- [`/`](https://edge-kalshi.84-247-179-222.nip.io/) — the benchmark: how much sooner the data
+  arrives, and how long the trip takes, plus the live decoded feed for every Kalshi crypto
+  perpetual.
+- [`/duel`](https://edge-kalshi.84-247-179-222.nip.io/duel) — the demo: what that head start
+  actually buys.
 
 ```bash
 uv run python -m web.server        # http://localhost:8080
