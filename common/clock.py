@@ -84,7 +84,7 @@ def clock_offset_ms() -> dict | None:
         return None
     try:
         out = subprocess.run(["chronyc", "-c", "tracking"], capture_output=True,
-                             text=True, timeout=2.0)
+                             text=True, timeout=2.0, check=False)
     except (OSError, subprocess.SubprocessError):
         return None
     if out.returncode != 0:

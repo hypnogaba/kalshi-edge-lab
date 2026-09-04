@@ -44,10 +44,21 @@ class Instrument:
 class InstrumentRegistry:
     def __init__(self) -> None:
         self._instruments: dict[int, Instrument] = {}
+        # One registry is fed by both publisher arms (see sources/dz_feed/arms.py).
+        # They agree on every InstrumentID today -- checked live, both publish the
+        # same 18 ids for the same symbols -- but nothing on the wire promises it,
+        # and if it ever stopped being true a shared registry would relabel one
+        # market as another in silence. So the first symbol an id resolves to
+        # wins, and a disagreement is counted where a reader can see it.
+        self.symbol_conflicts = 0
 
     def update(self, instr_id: int, symbol: str, price_exp: int, qty_exp: int,
                source_id: int, tick_size_raw: int = 0, lot_size_raw: int = 0,
                contract_value_raw: int = 0) -> None:
+        known = self._instruments.get(instr_id)
+        if known is not None and known.symbol != symbol:
+            self.symbol_conflicts += 1
+            return
         self._instruments[instr_id] = Instrument(
             symbol=symbol, price_exp=price_exp, qty_exp=qty_exp, source_id=source_id,
             tick_size_raw=tick_size_raw, lot_size_raw=lot_size_raw,

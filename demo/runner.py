@@ -33,6 +33,7 @@ import socket
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import orjson
@@ -44,8 +45,9 @@ from common.ws_client import ReconnectingWS
 from demo.fills import DEFAULT_MARKOUT_NS, DEFAULT_REACTION_NS, Fill, GroundTruth, Scoreboard
 from demo.public_feed import PublicFeed
 from demo.strategy import FollowThePrint, Intent, StrategyConfig
+from sources.dz_feed.arms import ArmArbiter
 from sources.dz_feed.contract_sizes import ContractSizes
-from sources.dz_feed.decoder import DzDecoder
+from sources.dz_feed.decoder import DzDecoder, frame_channel
 from sources.kalshi_ws.auth import KalshiSigner
 
 _log = logging.getLogger(__name__)
@@ -71,9 +73,12 @@ DZ = "doublezero"
 PUBLIC = "public"
 
 
-def duel_key(market: str, dollars: float, contracts: float, exch_ts_ns: int) -> tuple:
-    """Same join key as the latency race: the venue's own view of one trade."""
-    return (market, exch_ts_ns // 1_000_000, round(dollars), round(contracts))
+def duel_key(market: str, dollars: float, contracts: float, exch_ts_ns: int,
+             tick: float) -> tuple:
+    """Same join key as the latency race: the venue's own view of one trade,
+    with the price counted in the market's own ticks so a cheap market keeps
+    its price in the key (see sources/dz_feed/contract_sizes.py)."""
+    return (market, exch_ts_ns // 1_000_000, round(dollars / tick), round(contracts))
 
 
 @dataclass
@@ -115,8 +120,14 @@ class DemoState:
 
     def __init__(self, config: StrategyConfig, markout_ns: int,
                  reaction_ns: int = DEFAULT_REACTION_NS,
-                 window_min: float = DEFAULT_WINDOW_MIN) -> None:
+                 window_min: float = DEFAULT_WINDOW_MIN,
+                 tick_of: Callable[[str], float | None] | None = None) -> None:
         self._lock = threading.Lock()
+        # Both bots' decisions are paired on the print they reacted to, and the
+        # key quantises the price by the market's own tick. Supplied by the DZ
+        # reference data, which is also what puts the two feeds on one axis, so
+        # an event that got this far always has one.
+        self._tick_of = tick_of or (lambda _market: None)
         self._markout_ns = markout_ns
         self._reaction_ns = reaction_ns
         self._window_ns = int(window_min * 60 * 1e9)
@@ -144,7 +155,11 @@ class DemoState:
                     self.truth.record(book)
             intent = self.bots[name].on_event(event)
             if intent is not None and event.exch_ts_ns:
-                key = duel_key(event.market, event.price, event.size, event.exch_ts_ns)
+                tick = self._tick_of(event.market)
+                if tick is None or tick <= 0:
+                    return  # no reference data: a key here could not pair anyway
+                key = duel_key(event.market, event.price, event.size,
+                               event.exch_ts_ns, tick)
                 self._pending.append((name, intent, key))
 
     def settle_due(self) -> None:
@@ -216,7 +231,8 @@ class DemoState:
 # so nothing downstream has to know which pipe an event came from.
 
 def _dz_reader(state: DemoState, group: str, ports: set[int], link: str,
-               sizes: ContractSizes, stop: threading.Event) -> None:
+               sizes: ContractSizes, arbiter: ArmArbiter,
+               stop: threading.Event) -> None:
     group_bytes = bytes(int(x) for x in group.split("."))
     sock = socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(_ETH_P_IP))
     sock.bind((link, 0))
@@ -235,7 +251,24 @@ def _dz_reader(state: DemoState, group: str, ports: set[int], link: str,
             if ((data[ihl + 2] << 8) | data[ihl + 3]) not in ports:
                 continue
             t = now_ns()
-            for event in decoder.decode(data[ihl + 8:], t):
+            payload = data[ihl + 8:]
+            channel = frame_channel(payload)
+            if channel is None:
+                continue
+            arbiter.note_frame(channel, t)
+            events = decoder.decode(payload, t)
+            # The group carries two publisher arms. Both are offered to the
+            # arbiter, so it can see which one leads, and only the winner's
+            # events reach the bot: the loser's copies land ~5 ms late and, on
+            # quotes, walk the DoubleZero bot's book backwards -- which is the
+            # one thing this demo must not do.
+            for event in events:
+                if event.kind is Kind.TRADE and event.size is not None:
+                    arbiter.observe_trade(channel, (event.market, event.price,
+                                                    event.size), t)
+            if not arbiter.accepts(channel, t):
+                continue
+            for event in events:
                 if event.size is None or event.market not in wanted:
                     continue
                 # Reference data arrives on the refdata port within seconds of
@@ -290,29 +323,32 @@ def _write_json(path: str, obj: dict) -> None:
     os.replace(tmp, path)
 
 
-async def _writer(state: DemoState, out_path: str, flush_ms: int) -> None:
+async def _writer(state: DemoState, arbiter: ArmArbiter, out_path: str,
+                  flush_ms: int) -> None:
     while True:
         state.settle_due()
-        _write_json(out_path, state.snapshot())
+        _write_json(out_path, {**state.snapshot(), "arms": arbiter.stats(now_ns())})
         await asyncio.sleep(flush_ms / 1000)
 
 
 async def _main(args: argparse.Namespace) -> None:
+    sizes = ContractSizes()
     state = DemoState(
         StrategyConfig(min_print_size=args.min_print_size, order_size=args.order_size,
                        max_position=args.max_position,
                        cooldown_ns=int(args.cooldown_s * 1e9)),
         markout_ns=int(args.markout_ms * 1e6),
-        reaction_ns=int(args.reaction_ms * 1e6))
-    sizes = ContractSizes()
+        reaction_ns=int(args.reaction_ms * 1e6),
+        tick_of=sizes.tick)
     stop = threading.Event()
+    arbiter = ArmArbiter(args.dz_channel)
     reader = threading.Thread(target=_dz_reader, daemon=True, args=(
         state, args.group, {args.mktdata_port, args.refdata_port}, args.link,
-        sizes, stop))
+        sizes, arbiter, stop))
     reader.start()
     try:
         await asyncio.gather(_public_ws(state, sizes),
-                             _writer(state, args.out, args.flush_ms))
+                             _writer(state, arbiter, args.out, args.flush_ms))
     finally:
         stop.set()
 
@@ -336,6 +372,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--order-size", type=int, default=1)
     ap.add_argument("--max-position", type=int, default=5)
     ap.add_argument("--cooldown-s", type=float, default=2.0)
+    ap.add_argument("--dz-channel", type=int, default=None,
+                    help="Force a DZ frame Channel ID instead of arbitrating the "
+                         "publisher arms automatically (see sources/dz_feed/arms.py)")
     return ap.parse_args(argv)
 
 

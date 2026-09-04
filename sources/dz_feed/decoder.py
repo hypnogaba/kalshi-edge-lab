@@ -36,6 +36,21 @@ from sources.dz_feed.registry import InstrumentRegistry
 _MAGIC = 0x445A
 _SCHEMA_VER = 3
 
+# Magic u16 + Schema Ver u8 + Channel ID u8: enough of the frame header to tell
+# which publisher arm a frame came from without decoding its body. The group
+# carries two arms at once -- see sources/dz_feed/arms.py.
+_FRAME_PREFIX = struct.Struct("<HBB")
+
+
+def frame_channel(raw: bytes) -> int | None:
+    """The frame's Channel ID, or None if this is not a v3 frame we understand."""
+    if len(raw) < _FRAME_PREFIX.size:
+        return None
+    magic, schema_ver, channel_id = _FRAME_PREFIX.unpack_from(raw, 0)
+    if magic != _MAGIC or schema_ver != _SCHEMA_VER:
+        return None
+    return channel_id
+
 _FRAME_HEADER = struct.Struct("<HBBQQBBH")
 _MSG_HEADER = struct.Struct("<BBH")
 

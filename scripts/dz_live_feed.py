@@ -28,7 +28,8 @@ import orjson
 
 from common.clock import now_ns
 from common.event import Kind, Side
-from sources.dz_feed.decoder import DzDecoder
+from sources.dz_feed.arms import ArmArbiter
+from sources.dz_feed.decoder import DzDecoder, frame_channel
 
 _log = logging.getLogger(__name__)
 
@@ -112,7 +113,7 @@ class LiveState:
             self._win_frames = 0
             self._win_trades = 0
 
-    def snapshot(self, meta: dict) -> dict:
+    def snapshot(self, meta: dict, arms: dict | None = None) -> dict:
         now = now_ns()
         # Only surface markets that actually resolved to a Kalshi symbol.
         markets = {k: v for k, v in self.markets.items() if k.startswith("KX")}
@@ -125,6 +126,10 @@ class LiveState:
                       "trades_per_s": round(self.trades_per_s, 2)},
             "market_count": len(markets),
             "markets": markets,
+            # Which publisher arm these numbers came from. Until 2026-09-04 both
+            # arms were applied, so every total and rate here was ~2x the truth
+            # and the book was walked backwards by the slow arm's late copies.
+            "arms": arms or {},
         }
 
 
@@ -136,10 +141,11 @@ def _write_atomic(path: str, obj: dict) -> None:
 
 
 def run(link_ifname: str, group: str, ports: set[int], out_path: str,
-        flush_ms: int, meta: dict) -> None:
+        flush_ms: int, meta: dict, dz_channel: int | None = None) -> None:
     group_bytes = inet_aton(group)
     sock = _open_afpacket(link_ifname)
     decoder = DzDecoder()
+    arbiter = ArmArbiter(dz_channel)
     state = LiveState()
     next_flush = time.monotonic() + flush_ms / 1000.0
     _log.info("live feed: %s group=%s ports=%s -> %s", link_ifname, group, sorted(ports), out_path)
@@ -155,12 +161,26 @@ def run(link_ifname: str, group: str, ports: set[int], out_path: str,
                 payload = _udp_payload(data, group_bytes, ports)
                 if payload is None:
                     continue
+                channel = frame_channel(payload)
+                if channel is None:
+                    continue
+                arbiter.note_frame(channel, t)
+                events = decoder.decode(payload, t)
+                # Offer both arms to the arbiter, apply only the winner's. The
+                # loser's copy of a quote lands ~5 ms late, and applying it on
+                # top of a fresher update rolled the book back to a stale top of
+                # book in 9.5% of all quotes (15% of BTC's) when measured live.
+                for e in events:
+                    if e.kind == Kind.TRADE and e.size is not None:
+                        arbiter.observe_trade(channel, (e.market, e.price, e.size), t)
+                if not arbiter.accepts(channel, t):
+                    continue
                 state.frames += 1
                 state._win_frames += 1
-                state.apply(decoder.decode(payload, t))
+                state.apply(events)
             state.tick_rates()
             if time.monotonic() >= next_flush:
-                _write_atomic(out_path, state.snapshot(meta))
+                _write_atomic(out_path, state.snapshot(meta, arbiter.stats(now_ns())))
                 next_flush = time.monotonic() + flush_ms / 1000.0
     finally:
         sock.close()
@@ -177,6 +197,9 @@ def main() -> None:
     ap.add_argument("--flush-ms", type=int, default=1000)
     ap.add_argument("--device", default="fr2-dzx-001")
     ap.add_argument("--metro", default="Frankfurt")
+    ap.add_argument("--dz-channel", type=int, default=None,
+                    help="Force a DZ frame Channel ID instead of arbitrating the "
+                         "publisher arms automatically (see sources/dz_feed/arms.py)")
     args = ap.parse_args()
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
@@ -189,7 +212,7 @@ def main() -> None:
         "metro": args.metro,
     }
     run(args.link, args.group, {args.mktdata_port, args.refdata_port}, args.out,
-        args.flush_ms, meta)
+        args.flush_ms, meta, args.dz_channel)
 
 
 if __name__ == "__main__":

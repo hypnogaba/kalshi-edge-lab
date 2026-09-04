@@ -399,6 +399,8 @@ _PAGE_HTML = """<!doctype html>
           <dd>The kernel&rsquo;s <span class="mono">SO_TIMESTAMPNS</span> stamp, taken as the packet lands on the interface, not a clock read after our code wakes up.</dd>
           <dt>Sample</dt>
           <dd>Only trades seen on <i>both</i> feeds, joined on the venue timestamp, price and size, so the two rows describe the same prints.</dd>
+          <dt>Which publisher</dt>
+          <dd id="abs-arms">&mdash;</dd>
           <dt>Limits</dt>
           <dd id="abs-caveat"></dd>
         </dl>
@@ -625,6 +627,27 @@ _PAGE_HTML = """<!doctype html>
       ? 'our clock is <b>' + Math.abs(c.offset_ms).toFixed(2) + ' ms</b> off true time (' +
         c.source + ', stratum ' + c.stratum + ', worst case ' + c.error_ms.toFixed(1) + ' ms)'
       : 'our clock offset could not be read just now';
+    // The group is published twice over, by two hosts. Which copy these numbers
+    // came from, and what the other one would have cost, both stated.
+    var arms = (state.latency && state.latency.arms) || {};
+    var chans = arms.channels ? Object.keys(arms.channels) : [];
+    var armTxt;
+    if (chans.length > 1 && arms.selected !== null && arms.selected !== undefined) {
+      var lag = arms.loser_lag_ms;
+      armTxt = 'Kalshi publishes this group from <b>' + chans.length + ' hosts</b> at once, ' +
+               'carrying the same trades. We take the one that arrives first ' +
+               '(frame channel <span class="mono">' + arms.selected + '</span>, chosen by ' +
+               'watching them race, not by its number)' +
+               (lag ? ', and drop the other, which trails it by <b>' + lag.p50.toFixed(1) +
+                      ' ms</b> at the median' : '') + '.';
+    } else if (chans.length === 1) {
+      armTxt = 'One publisher on this group right now (frame channel <span class="mono">' +
+               chans[0] + '</span>), so there is nothing to arbitrate.';
+    } else {
+      armTxt = 'Publisher arbitration is still warming up.';
+    }
+    document.getElementById('abs-arms').innerHTML = armTxt;
+
     var lead = (typeof L.p50_ms === 'number') ? Math.abs(L.p50_ms).toFixed(1) + ' ms' : '—';
     document.getElementById('abs-caveat').innerHTML =
       'The total rests on two clocks, Kalshi&rsquo;s and ours &mdash; ' + clockTxt + '. ' +

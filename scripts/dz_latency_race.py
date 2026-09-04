@@ -2,11 +2,14 @@
 
 Both sides run on ONE host with ONE clock (common.clock.now_ns), so the arrival
 delta is fair (no cross-machine skew). The SAME trade is matched across the two
-feeds by (exchange-timestamp-ms, price, contract-count) -- Kalshi's public
-`trade_id` (a UUID) and the DZ feed's trade id (a u64) are different id spaces,
-but every trade carries the venue's own execution timestamp + price + size,
-which is identical on both feeds. Delta = t_arrival(dz) - t_arrival(public);
-negative => DoubleZero delivered it first.
+feeds by (exchange-timestamp-ms, price-in-ticks, contract-count) -- Kalshi's
+public `trade_id` (a UUID) and the DZ feed's trade id (a u64) are different id
+spaces, but every trade carries the venue's own execution timestamp + price +
+size, which is identical on both feeds. Delta = t_arrival(dz) -
+t_arrival(public); negative => DoubleZero delivered it first.
+
+The DZ group is published by TWO arms at once (see sources/dz_feed/arms.py);
+only the leading one is matched.
 
 Public side: Kalshi margin/perps WS `wss://external-api-margin-ws.kalshi.com/...`
 (API-key auth at handshake; the `trade` channel is public). DZ side: multicast
@@ -29,10 +32,9 @@ import struct
 import threading
 import time
 from collections import Counter, deque
+from dataclasses import dataclass
 
 import orjson
-
-from dataclasses import dataclass
 
 try:  # numpy arrives via matplotlib; the pure-Python path below is equivalent
     import numpy as _np
@@ -43,8 +45,9 @@ from common.clock import clock_offset_ms, now_ns, wall_ns
 from common.config import kalshi_prod
 from common.event import Kind
 from common.ws_client import ReconnectingWS
+from sources.dz_feed.arms import ArmArbiter
 from sources.dz_feed.contract_sizes import ContractSizes
-from sources.dz_feed.decoder import DzDecoder
+from sources.dz_feed.decoder import DzDecoder, frame_channel
 from sources.kalshi_ws.auth import KalshiSigner
 
 _log = logging.getLogger(__name__)
@@ -130,8 +133,19 @@ def _summarise(values: list) -> dict | None:
             "min_ms": round(lo, 3), "max_ms": round(hi, 3)}
 
 
-def _match_key(market: str, dollars: float, contracts: float, exch_ms: int) -> tuple:
-    return (market, exch_ms, round(dollars), round(contracts))
+def _match_key(market: str, dollars: float, contracts: float, exch_ms: int,
+               tick: float) -> tuple:
+    """The venue's own fields, quantised so the two feeds' different arithmetic
+    lands on one value.
+
+    Price is counted in the market's OWN ticks. A trade always sits on a tick,
+    so the quotient is an integer, which is the furthest a float can be from a
+    rounding boundary. Rounding to whole dollars instead -- what this did until
+    2026-09-04 -- threw the price away on every cheap market: DOGE at $0.089,
+    KSHIB at $0.0054, WLD and ADA all rounded to 0, and XRP and SUI both to 1,
+    leaving those six keyed on time and size alone.
+    """
+    return (market, exch_ms, round(dollars / tick), round(contracts))
 
 
 # A trade cannot reach us before the venue stamped it, and nothing on this
@@ -342,6 +356,16 @@ class RaceState:
             out.update({
                 "p10_ms": summary["p10_ms"], "p50_ms": summary["p50_ms"],
                 "p90_ms": summary["p90_ms"], "p95_ms": summary["p95_ms"],
+                # The tail is the story: the lead at p50 is a few ms, at p99 it
+                # is tens. Publishing p50/p90 alone hid exactly the half of the
+                # distribution the edge lives in. min/max stay unclipped on
+                # purpose -- they are real deliveries, not artefacts. A -170 ms
+                # sample is the public socket stalling (its own max is 300 ms);
+                # a +130 ms one is this process being descheduled between the
+                # kernel handing us the packet and now_ns(), which the monotonic
+                # delta charges to DoubleZero. Both are honest, and the second
+                # one counts against the side we are advertising.
+                "p99_ms": summary["p99_ms"],
                 "min_ms": summary["min_ms"], "max_ms": summary["max_ms"],
                 # win_rate: % of matched trades DoubleZero delivered first
                 "win_rate": round(100.0 * wins / n, 1),
@@ -376,7 +400,8 @@ class RaceState:
 
 
 def _dz_reader(state: RaceState, group: str, ports: set[int], link: str,
-               sizes: ContractSizes, stop: threading.Event) -> None:
+               sizes: ContractSizes, arbiter: ArmArbiter,
+               stop: threading.Event) -> None:
     group_bytes = bytes(int(x) for x in group.split("."))
     sock = socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(_ETH_P_IP))
     sock.bind((link, 0))
@@ -413,15 +438,29 @@ def _dz_reader(state: RaceState, group: str, ports: set[int], link: str,
             dport = (data[ihl + 2] << 8) | data[ihl + 3]
             if dport not in ports:
                 continue
-            for e in decoder.decode(data[ihl + 8:], t):
-                if not (e.kind == Kind.TRADE and e.exch_ts_ns and e.size is not None
-                        and isinstance(e.market, str) and e.market.endswith("PERP")):
-                    continue
-                contract_size = sizes.learn_from(decoder.registry, e.market)
-                if contract_size is None:
+            payload = data[ihl + 8:]
+            channel = frame_channel(payload)
+            if channel is None:
+                continue
+            arbiter.note_frame(channel, t)
+            trades = [e for e in decoder.decode(payload, t)
+                      if e.kind == Kind.TRADE and e.exch_ts_ns and e.size is not None
+                      and isinstance(e.market, str) and e.market.endswith("PERP")]
+            # Both arms are decoded and offered to the arbiter -- watching them
+            # race each other is the only way to know which one leads -- and
+            # only then is the loser's copy dropped, before it reaches the
+            # matcher. Feeding both in doubled dz_seen and left every trade
+            # with a redundant twin waiting out its 30 s TTL.
+            for e in trades:
+                arbiter.observe_trade(channel, (e.market, e.price, e.size), t)
+            if not arbiter.accepts(channel, t):
+                continue
+            for e in trades:
+                axis = sizes.axis_from(decoder.registry, e.market)
+                if axis is None:
                     continue  # reference data has not arrived for this market yet
-                key = _match_key(e.market, e.price, e.size / contract_size,
-                                 e.exch_ts_ns // 1_000_000)
+                key = _match_key(e.market, e.price, e.size / axis.contract_size,
+                                 e.exch_ts_ns // 1_000_000, axis.tick_size)
                 state.add_dz(key, Half(mono_ns=t, wall_ns=t_wall,
                                        exch_ts_ns=e.exch_ts_ns,
                                        pub_ts_ns=e.pub_ts_ns))
@@ -446,12 +485,12 @@ async def _public_ws(state: RaceState, sizes: ContractSizes) -> None:
         if m.get("type") != "trade":
             return
         msg = m["msg"]
-        contract_size = sizes.get(msg["market_ticker"])
-        if contract_size is None:
+        axis = sizes.axis(msg["market_ticker"])
+        if axis is None:
             return  # not yet on a common axis with the DZ side; it could not match
         exch_ms = int(msg["ts_ms"])
-        key = _match_key(msg["market_ticker"], float(msg["price"]) / contract_size,
-                         float(msg["count"]), exch_ms)
+        key = _match_key(msg["market_ticker"], float(msg["price"]) / axis.contract_size,
+                         float(msg["count"]), exch_ms, axis.tick_size)
         state.add_pub(key, Half(mono_ns=t, wall_ns=t_wall,
                                 exch_ts_ns=exch_ms * 1_000_000))
 
@@ -468,10 +507,14 @@ def _write_json(path: str, obj: dict) -> None:
     os.replace(tmp, path)
 
 
-async def _flush_loop(state: RaceState, out_path: str, flush_ms: int,
-                      window_min: float, meta: dict) -> None:
+async def _flush_loop(state: RaceState, arbiter: ArmArbiter, out_path: str,
+                      flush_ms: int, window_min: float, meta: dict) -> None:
     def build_and_write() -> None:
-        _write_json(out_path, {**meta, **state.snapshot(window_min)})
+        snapshot = state.snapshot(window_min)
+        # Which arm the numbers came from, and what the other one cost, both
+        # published: the choice can be checked off the data instead of trusted.
+        snapshot["arms"] = arbiter.stats(now_ns())
+        _write_json(out_path, {**meta, **snapshot})
 
     while True:
         # snapshot() sorts the whole window. Run on the event loop it blocks
@@ -485,12 +528,14 @@ async def _flush_loop(state: RaceState, out_path: str, flush_ms: int,
 
 async def _main(args: argparse.Namespace) -> None:
     state = RaceState(args.window_min)
+    arbiter = ArmArbiter(args.dz_channel)
     meta = {
         "ticker": "all perps",
         "markets": len(PERP_TICKERS),
         "dz_group": args.group,
         "public_ws": "external-api-margin-ws.kalshi.com",
-        "method": "one host, one clock; match by exch-ts+price+size; delta=dz-public",
+        "method": ("one host, one clock; one publisher arm; match by "
+                   "exch-ts + price-in-ticks + size; delta=dz-public"),
         "absolute_method": (
             "end-to-end = kernel packet timestamp (SO_TIMESTAMPNS) minus the "
             "venue's own exchange timestamp, over matched pairs only so both "
@@ -503,7 +548,7 @@ async def _main(args: argparse.Namespace) -> None:
     reader = threading.Thread(
         target=_dz_reader,
         args=(state, args.group, {args.mktdata_port, args.refdata_port}, args.link,
-              sizes, stop),
+              sizes, arbiter, stop),
         daemon=True,
     )
     reader.start()
@@ -511,7 +556,7 @@ async def _main(args: argparse.Namespace) -> None:
     try:
         await asyncio.gather(
             _public_ws(state, sizes),
-            _flush_loop(state, args.out, args.flush_ms, args.window_min, meta),
+            _flush_loop(state, arbiter, args.out, args.flush_ms, args.window_min, meta),
         )
     finally:
         stop.set()
@@ -528,6 +573,9 @@ def main() -> None:
     ap.add_argument("--out", default="data/dz_latency.json")
     ap.add_argument("--flush-ms", type=int, default=1000)
     ap.add_argument("--window-min", type=float, default=1440.0)
+    ap.add_argument("--dz-channel", type=int, default=None,
+                    help="Force a DZ frame Channel ID instead of arbitrating the "
+                         "publisher arms automatically (see sources/dz_feed/arms.py)")
     args = ap.parse_args()
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     try:
