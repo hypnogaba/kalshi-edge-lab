@@ -21,33 +21,65 @@ result is the arrival advantage a co-located consumer actually gets.
 The same trade is received two ways on one machine and timed with one monotonic clock
 (`CLOCK_MONOTONIC_RAW`), stamped at the moment bytes leave the socket, before any decoding.
 Because the two feeds live in different trade-id spaces (Kalshi's public `trade_id` is a UUID,
-the edge feed's is a `u64`), each trade is matched by the venue's own execution timestamp plus
-price plus size — identical on both sides. The metric is:
+the edge feed's is a `u64`), each trade is matched by the venue's own execution timestamp, price
+and size — identical on both sides. The price is counted in the market's own tick, which the
+edge feed publishes in its instrument definitions, because the two sides reach the same price by
+different arithmetic. The metric is:
 
 ```
 delta = t_arrival(dz) − t_arrival(public)      # negative ⇒ DoubleZero delivered it first
 ```
 
 The headline figures are **win-rate** (share of trades where DoubleZero arrived first) and
-**median lead**. Live numbers are shown on the dashboard and are reproducible from source; they
-are not hard-coded here. Full method, threats to validity, and offline tool validation are in
+**median lead**. Alongside the lead, the dashboard reports the **absolute** trip: every Kalshi
+trade carries the venue's own execution timestamp, so the clock can start at the exchange rather
+than at our door, and each feed's end-to-end time is reported over the same matched trades.
+
+Live numbers are shown on the dashboard and are reproducible from source; they are not
+hard-coded here. Full method, threats to validity, and offline tool validation are in
 [`docs/methodology.md`](docs/methodology.md).
+
+### One publisher, not two
+
+The multicast group is published twice over, from two hosts under two frame Channel IDs,
+carrying the same trades a few milliseconds apart. A reader that takes both counts everything
+twice and, on quotes, walks its book backwards whenever the slow copy of an update lands after
+the fast copy of the next one. So the receivers arbitrate: they watch the arms race the same
+trade and keep the one that leads. The choice is made from the data rather than from a channel
+number, and is published next to the counts it produced. See
+[`sources/dz_feed/arms.py`](sources/dz_feed/arms.py).
 
 ## Live dashboard
 
-[`web/server.py`](web/server.py) is a read-only FastAPI + SSE app that serves a self-contained,
-monochrome page: a live latency scoreboard plus the live decoded feed for every Kalshi crypto
-perpetual. It never places orders or touches funds.
+[`web/server.py`](web/server.py) is a read-only FastAPI + SSE app serving two self-contained,
+monochrome pages. It never places orders or touches funds.
+
+- `/` — the benchmark: how much sooner the data arrives, and how long the trip takes, plus the
+  live decoded feed for every Kalshi crypto perpetual.
+- `/duel` — the demo: what that head start actually buys.
 
 ```bash
 uv run python -m web.server        # http://localhost:8080
 ```
 
-The page reads two JSON snapshots written by two collector services that run on the
-DoubleZero-connected host:
+The pages read JSON snapshots written by collector services on the DoubleZero-connected host:
 
 - [`scripts/dz_live_feed.py`](scripts/dz_live_feed.py) — decoded feed → `data/dz_feed_state.json`
 - [`scripts/dz_latency_race.py`](scripts/dz_latency_race.py) — live race → `data/dz_latency.json`
+- [`demo/runner.py`](demo/runner.py) — the two-bot duel → `data/demo_state.json`
+
+## The duel
+
+[`demo/`](demo/) runs **one strategy twice**, one copy fed by the edge feed and one by the public
+WebSocket, in a single process on a single clock. Both react to the same print, both are filled
+against the same order book, and each is judged at the moment its own order could have arrived.
+The only difference between them is when they found out.
+
+The honest claim it supports is that you **get the price you aimed at more often**, which is what
+the fill rates measure. It is not a claim that faster is more profitable: the demo rule crosses
+the spread on purpose, so its mark-out is negative for both copies. Fills are paper, model no
+queue position and no fees, and both sides get that same free pass. What to show and what not to
+claim is in [`docs/stream-runbook.md`](docs/stream-runbook.md).
 
 ## The feed & decoder
 
@@ -79,21 +111,29 @@ confirms the tooling recovers exactly +3.000 ms at a 100% match rate.
 ```
 common/          Event, clock, storage, config, reconnecting WS client
 sources/
-  dz_feed/       DoubleZero edge feed: AF_PACKET capture + binary decoder + registry
+  dz_feed/       Edge feed: AF_PACKET capture, binary decoder, instrument registry,
+                 publisher-arm arbitration, per-market contract size and tick
   kalshi_ws/     Public Kalshi perps WebSocket adapter (capture + decode)
 race/            Trade matcher, latency stats, PNG report
+demo/            Two-bot duel: one strategy, two feeds, shared order book
 scripts/         run_race, dz_live_feed, dz_latency_race, check_auth, verify_capture
-web/             Live web dashboard (FastAPI + SSE)
+web/             Live dashboard and duel page (FastAPI + SSE)
 deploy/          Server setup, run scripts, systemd units, tunnel guide
-docs/            Methodology, runbook, feed notes
-tests/           Decoder, matcher, stats, and pipeline tests
+docs/            Methodology, runbook, stream runbook, feed notes
+tests/           Decoder, matcher, arbitration, stats, duel, and pipeline tests
 ```
 
 ## Reproducibility & methodology
 
-Every published latency figure is reproducible from this repository. The measurement method
-and its validation are in [`docs/methodology.md`](docs/methodology.md); the server-side
-operation for running the live race is in [`docs/runbook.md`](docs/runbook.md).
+Every published latency figure is reproducible from this repository. The measurement method,
+what it deliberately does not clip, and its threats to validity are in
+[`docs/methodology.md`](docs/methodology.md). Server-side operation for the live race is in
+[`docs/runbook.md`](docs/runbook.md), the public perps WS field notes in
+[`docs/feed-notes.md`](docs/feed-notes.md).
+
+[`scripts/run_race.py`](scripts/run_race.py) is the capture-then-replay twin of the live race:
+it records both feeds to disk and matches them offline, using the same socket, the same
+publisher-arm arbitration and the same join key, so a run can be re-examined after the fact.
 
 ## License
 
