@@ -1,6 +1,0 @@
-{"type":"subscribed","id":1,"msg":{"channel":"orderbook_delta","sid":1}}
-{"type":"subscribed","id":1,"msg":{"channel":"trade","sid":2}}
-{"type":"orderbook_snapshot","sid":1,"seq":1,"msg":{"market_ticker":"KXBTCD-26AUG2017-T73749.99","market_id":"ce3720ea-b877-4589-9250-757c7027f907"}}
-{"type":"orderbook_snapshot","sid":1,"seq":2,"msg":{"market_ticker":"KXBTCD-X","yes":[[10,100],[11,50]],"no":[[20,30]]}}
-{"type":"orderbook_delta","sid":1,"seq":3,"msg":{"market_ticker":"KXBTCD-X","price":40,"delta":-2,"side":"no"}}
-{"type":"trade","sid":2,"msg":{"market_ticker":"KXBTCD-X","yes_price":52,"count":3,"taker_side":"yes","ts":1700}}

@@ -15,8 +15,8 @@
 #   MARKET          --market          (required, no default)
 #   GROUP           --group           (required, no default)
 #   IFACE           --iface           (required, no default)
-#   MKTDATA_PORT    --mktdata-port    default 9601
-#   REFDATA_PORT    --refdata-port    default 9602
+#   MKTDATA_PORT    --mktdata-port    default 31000
+#   REFDATA_PORT    --refdata-port    default 41000
 #   MINUTES         --minutes         default 10
 # ────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -24,8 +24,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-MKTDATA_PORT="${MKTDATA_PORT:-9601}"
-REFDATA_PORT="${REFDATA_PORT:-9602}"
+MKTDATA_PORT="${MKTDATA_PORT:-31000}"
+REFDATA_PORT="${REFDATA_PORT:-41000}"
 MINUTES="${MINUTES:-10}"
 MARKET="${MARKET:-}"
 GROUP="${GROUP:-}"

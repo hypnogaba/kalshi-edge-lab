@@ -1,5 +1,13 @@
 # sources/kalshi_ws/capture.py
-"""Capture the Kalshi public WS (orderbook_delta + trade) to an append-only frame log."""
+"""Capture Kalshi's public perps WS to an append-only frame log.
+
+The socket is `external-api-margin-ws.kalshi.com`, NOT the `/trade-api/ws/v2`
+one this used to open: the crypto perpetuals this lab races are only on the
+margin socket, so a capture of the other one has no trade to match and the race
+silently reported nothing. The URL is fixed here rather than read from
+KALSHI_PROD_WS, so an offline capture can never end up on a different socket
+than the live race in scripts/dz_latency_race.py.
+"""
 import argparse
 import asyncio
 import logging
@@ -10,8 +18,9 @@ from common.storage import FrameWriter
 from common.ws_client import ReconnectingWS
 from sources.kalshi_ws.auth import KalshiSigner
 
-WS_PATH = "/trade-api/ws/v2"
-CHANNELS = ["orderbook_delta", "trade"]
+MARGIN_WS_URL = "wss://external-api-margin-ws.kalshi.com/trade-api/ws/v2/margin"
+WS_PATH = "/trade-api/ws/v2/margin"
+CHANNELS = ["trade"]
 
 
 async def capture(cfg: KalshiConfig, markets: list[str], out_path: str,
@@ -28,7 +37,7 @@ async def capture(cfg: KalshiConfig, markets: list[str], out_path: str,
 
     sub = [{"id": 1, "cmd": "subscribe",
             "params": {"channels": CHANNELS, "market_tickers": markets}}]
-    client = ReconnectingWS(cfg.ws_url, headers, on_message, subscribe_msgs=sub)
+    client = ReconnectingWS(MARGIN_WS_URL, headers, on_message, subscribe_msgs=sub)
     runner = asyncio.create_task(client.run())
     try:
         if duration_s is not None:

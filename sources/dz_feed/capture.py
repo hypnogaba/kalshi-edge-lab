@@ -6,9 +6,14 @@ DoubleZero's client kernel-decapsulates the GRE tunnel used for last-mile
 delivery, so the application sees plain UDP multicast on that interface --
 this module does a normal `IP_ADD_MEMBERSHIP` join, no GRE handling here.
 
-Defaults are Port Set A (Top-of-Book & Trades) on group 233.84.178.15:
-  mktdata (Quote/Trade/Heartbeat/EndOfSession):  port 9601
-  refdata (InstrumentDefinition/ManifestSummary): port 9602
+Defaults are the live Kalshi perps group, the one the running services use:
+  group 233.84.178.3 (edge-kalshi-perps-tob)
+  mktdata (Quote/Trade/Heartbeat/EndOfSession):  port 31000
+  refdata (InstrumentDefinition/ManifestSummary): port 41000
+
+The first-day values (233.84.178.15 / 9601 / 9602) were left here long after the
+feed moved, so anyone running this with the defaults captured an empty file and
+had no way to tell that from a quiet market.
 
 A subscriber bootstrapping from a cold start MUST bind both ports so it can
 resolve InstrumentDefinition alongside live Quote/Trade traffic. Raw frames
@@ -35,9 +40,9 @@ from common.clock import now_ns
 from common.storage import FrameWriter, read_frames
 from sources.dz_feed.decoder import DzDecoder
 
-DEFAULT_GROUP = "233.84.178.15"
-DEFAULT_MKTDATA_PORT = 9601
-DEFAULT_REFDATA_PORT = 9602
+DEFAULT_GROUP = "233.84.178.3"
+DEFAULT_MKTDATA_PORT = 31000
+DEFAULT_REFDATA_PORT = 41000
 
 _log = logging.getLogger(__name__)
 

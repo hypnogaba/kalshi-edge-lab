@@ -8,7 +8,11 @@ binary Top-of-Book & Trades v3 spec, documented separately in
 
 ## Subscription envelope
 
-Captured sample lines live in `tests/data/kalshi_samples.jsonl`.
+Captured sample lines live in `tests/data/margin_trades.jsonl`, recorded straight off the
+live socket. The older `kalshi_samples.jsonl` came from the other socket
+(`/trade-api/ws/v2`, Kalshi's event markets) and was dropped once the decoder was
+repointed here: keeping fixtures for a schema nothing decodes is how the decoder came
+to read `yes_price` from a feed that sends `price` for months without a red test.
 
 ```json
 {"type":"subscribed","id":1,"msg":{"channel":"orderbook_delta","sid":1}}
