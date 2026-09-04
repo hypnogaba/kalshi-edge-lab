@@ -50,7 +50,7 @@ DUEL_HTML = """<!doctype html>
   .pill.off{border-style:dashed; color:var(--faint)}
   main{padding:30px 0 26px}
   .lede{color:var(--muted); max-width:66ch; margin:0 0 26px; line-height:1.65;
-        font-size:15.5px}
+        font-size:15.5px; text-wrap:pretty}
   .lede b{color:var(--fg); font-weight:600}
   /* One panel, three cells. Two bordered boxes with loose text between them read
      as three separate exhibits; the point is a single comparison, so the divider
@@ -61,19 +61,28 @@ DUEL_HTML = """<!doctype html>
        overflow:hidden}
   .side{padding:24px 26px 22px; min-width:0}
   .side.fast{background:color-mix(in srgb, var(--win) 5%, var(--panel))}
-  .side h2{font-family:"IBM Plex Mono"; font-size:11.5px; letter-spacing:.12em;
+  .side h2,.versus h2{font-family:"IBM Plex Mono"; font-size:11.5px; letter-spacing:.12em;
     text-transform:uppercase; color:var(--muted); font-weight:500; margin:0}
+  .versus h2{color:var(--faint)}
   .side.fast h2{color:var(--win)}
   .big{font-family:"Archivo",system-ui,sans-serif; font-weight:800;
        font-size:clamp(38px, 5vw, 56px); line-height:1.05; letter-spacing:-.03em;
        margin:10px 0 6px}
   .side.fast .big{color:var(--win)}
-  .unit{color:var(--faint); font-size:13px; line-height:1.5; max-width:32ch}
-  .versus{display:flex; flex-direction:column; align-items:center; justify-content:center;
-          gap:4px; padding:24px 22px; min-width:132px;
+  /* text-wrap:pretty keeps the last word off a line of its own; without it both
+     of these captions ended on an orphan. */
+  .unit{color:var(--faint); font-size:13px; line-height:1.5; max-width:34ch;
+        text-wrap:pretty}
+  /* Same three-part structure as the two sides -- label, number, qualifier -- so
+     the three numbers land on one line. Centring this cell on its own put the
+     head start on a baseline of its own, half a line above the two rates it
+     sits between. */
+  .versus{display:flex; flex-direction:column; align-items:center;
+          padding:24px 22px 22px; min-width:136px; text-align:center;
           border-left:1px solid var(--line); border-right:1px solid var(--line)}
-  .versus .lead{font-family:"Archivo"; font-weight:800; font-size:30px;
-                letter-spacing:-.02em; line-height:1}
+  .versus .lead{font-family:"Archivo",system-ui,sans-serif; font-weight:800;
+                font-size:clamp(26px, 3vw, 34px); line-height:1.05;
+                letter-spacing:-.02em; margin:10px 0 6px}
   .versus .cap{font-family:"IBM Plex Mono"; font-size:10.5px; letter-spacing:.1em;
     text-transform:uppercase; color:var(--faint); text-align:center; line-height:1.5}
   @media (max-width:760px){
@@ -140,8 +149,9 @@ DUEL_HTML = """<!doctype html>
       <div class="unit">of shared chances taken at the price it wanted</div>
     </section>
     <div class="versus">
+      <h2>Head start</h2>
       <div class="lead mono" id="lead">\u2026</div>
-      <div class="cap">median<br>head start</div>
+      <div class="cap">median, over<br>the public feed</div>
     </div>
     <section class="side fast">
       <h2>DoubleZero edge</h2>
