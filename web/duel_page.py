@@ -124,7 +124,7 @@ DUEL_HTML = """<!doctype html>
         overflow-x:auto; overflow-y:hidden}
   .empty{padding:26px 16px; color:var(--faint); font-family:"IBM Plex Mono"; font-size:14px}
   footer{border-top:1px solid var(--line); margin-top:34px; padding:20px 0 36px;
-         color:var(--faint); font-size:13.5px; line-height:1.7; max-width:78ch}
+         color:var(--faint); font-size:13.5px; line-height:1.7}
   footer b{color:var(--muted); font-weight:600}
 </style>
 <header><div class="wrap bar">
