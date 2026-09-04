@@ -66,6 +66,7 @@ class ArmArbiter:
         self._wins_total: Counter[int] = Counter()
         self._last_seen: dict[int, int] = {}
         self._pairs = 0
+        self._stale_pairs = 0
         self._reselections = 0
 
     # -- ingest ---------------------------------------------------------------
@@ -89,6 +90,14 @@ class ArmArbiter:
             prev_channel, prev_ns = prev
             if prev_channel == channel:
                 return  # same arm again: keep the earliest sighting, wait for the twin
+            if arrival_ns - prev_ns > self._pair_ttl_ns:
+                # Too far apart to be one trade. Two prints at the same price and
+                # size half a minute apart are two trades, and pairing them
+                # invents a lag of half a minute and hands the wrong arm a win.
+                # Seen live: a 40 s "lag" in the published statistic on day one.
+                self._pending[key] = (channel, arrival_ns)
+                self._stale_pairs += 1
+                return
             del self._pending[key]
             self._pairs += 1
             self._wins_total[prev_channel] += 1
@@ -96,8 +105,9 @@ class ArmArbiter:
             self._resolve()
 
     def _sweep(self, now_ns: int) -> None:
-        """Drop sightings whose twin never came. Bounded by the number of
-        unpaired trades, not by how long we have been running."""
+        """Drop sightings whose twin never came, so the map cannot grow without
+        bound in a process that runs for days. Correctness does not rest on this
+        running often: the age of a sighting is checked again when it pairs."""
         if len(self._pending) < 256:
             return
         cutoff = now_ns - self._pair_ttl_ns
@@ -157,6 +167,7 @@ class ArmArbiter:
                 "mode": "forced" if self._forced is not None else "auto",
                 "selected": self._selected,
                 "pairs": self._pairs,
+                "stale_pairs": self._stale_pairs,
                 "reselections": self._reselections,
                 "channels": channels,
             }

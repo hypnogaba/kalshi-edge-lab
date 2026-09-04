@@ -116,3 +116,36 @@ def test_pending_sightings_do_not_grow_without_bound():
         arb.observe_trade(FAST, ("KXBTCPERP", float(i), 1.0), t)
         t += MS
     assert len(arb._pending) < 1000
+
+
+def test_two_prints_far_apart_are_not_one_trade_seen_twice():
+    """A sighting that never got its twin must not pair with a later trade that
+    happens to share market, price and size. Live on day one this published a
+    40-second 'arm lag' and handed the slow arm a win it never earned."""
+    arb = ArmArbiter(pair_ttl_ns=2_000_000_000)
+    key = ("KXBTCPERP", 80000.0, 1.0)
+    arb.note_frame(FAST, 0)
+    arb.observe_trade(FAST, key, 0)
+    later = 40 * 1000 * MS
+    arb.note_frame(SLOW, later)
+    arb.observe_trade(SLOW, key, later)
+
+    st = arb.stats()
+    assert st["pairs"] == 0
+    assert st["stale_pairs"] == 1
+    assert "loser_lag_ms" not in st
+
+
+def test_the_stale_sighting_is_replaced_so_the_next_twin_still_pairs():
+    """Dropping the pair must not drop the trade: the newer sighting takes the
+    slot, and its own twin pairs normally."""
+    arb = ArmArbiter(pair_ttl_ns=2_000_000_000)
+    key = ("KXBTCPERP", 80000.0, 1.0)
+    arb.observe_trade(FAST, key, 0)
+    arb.observe_trade(SLOW, key, 40 * 1000 * MS)          # too old: replaces
+    arb.observe_trade(FAST, key, 40 * 1000 * MS + 5 * MS)  # its real twin
+
+    st = arb.stats()
+    assert st["pairs"] == 1
+    assert st["channels"][str(SLOW)]["wins"] == 1
+    assert st["loser_lag_ms"]["p50"] == 5.0
