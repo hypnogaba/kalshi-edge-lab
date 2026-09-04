@@ -1,9 +1,14 @@
 """The stream page: two bots, one screen.
 
-Deliberately not the same layout as the benchmark page. This one is built to be
-read off a video capture from across a room: dark, few numbers, each one large.
-Same type and colour tokens as web/server.py so the two still look like one
-product.
+Deliberately not the same layout as the benchmark page. It has to stay legible
+off a video capture from across a room, which is why the two rates carry the
+page. That is not the same as making them enormous: at 104px against 13px
+labels there was nothing in between, the two rates read as separate exhibits
+rather than one comparison, and the head start -- which is the whole reason the
+rates differ -- was set smaller than either of them. The scale below is
+ordered by what matters: rate, then head start, then the labels that qualify
+them. Same type and colour tokens as web/server.py so the two pages still look
+like one product.
 
 It states its own limits on screen, because a number that needs a caveat spoken
 out loud will be quoted without it.
@@ -25,14 +30,17 @@ DUEL_HTML = """<!doctype html>
   }
   *{box-sizing:border-box}
   @media (prefers-reduced-motion: reduce){ *{transition:none!important} }
-  body{margin:0; background:var(--ink); color:var(--fg); font-size:18px;
+  body{margin:0; background:var(--ink); color:var(--fg); font-size:16px;
     font-family:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
     -webkit-font-smoothing:antialiased}
-  .wrap{max-width:1200px; margin:0 auto; padding:0 32px}
+  /* 1200px let the table columns drift apart until the rows read as scattered
+     numbers rather than as a row. 1040 keeps them together on a wide screen. */
+  .wrap{max-width:1040px; margin:0 auto; padding:0 28px}
   .mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace; font-variant-numeric:tabular-nums}
   header{border-bottom:1px solid var(--line)}
-  .bar{display:flex; align-items:center; gap:16px; height:78px; flex-wrap:wrap}
-  h1{font-family:"Archivo",system-ui,sans-serif; font-weight:800; font-size:24px;
+  .bar{display:flex; align-items:center; gap:14px; min-height:62px; padding:12px 0;
+       flex-wrap:wrap}
+  h1{font-family:"Archivo",system-ui,sans-serif; font-weight:800; font-size:21px;
      letter-spacing:-.01em; margin:0}
   .spacer{flex:1}
   .pill{font-family:"IBM Plex Mono"; font-size:12px; letter-spacing:.06em;
@@ -40,49 +48,72 @@ DUEL_HTML = """<!doctype html>
     border:1px solid var(--line); color:var(--muted); white-space:nowrap}
   .pill.on{border-color:var(--win); color:var(--win)}
   .pill.off{border-style:dashed; color:var(--faint)}
-  main{padding:36px 0 28px}
-  .lede{color:var(--muted); max-width:72ch; margin:0 0 30px; line-height:1.6}
+  main{padding:30px 0 26px}
+  .lede{color:var(--muted); max-width:66ch; margin:0 0 26px; line-height:1.65;
+        font-size:15.5px}
   .lede b{color:var(--fg); font-weight:600}
-  .duo{display:grid; grid-template-columns:1fr auto 1fr; gap:24px; align-items:stretch}
-  .side{background:var(--panel); border:1px solid var(--line); border-radius:18px;
-        padding:30px 32px 26px}
-  .side.fast{border-color:color-mix(in srgb, var(--win) 45%, var(--line))}
-  .side h2{font-family:"IBM Plex Mono"; font-size:13px; letter-spacing:.12em;
-    text-transform:uppercase; color:var(--muted); font-weight:500; margin:0 0 6px}
+  /* One panel, three cells. Two bordered boxes with loose text between them read
+     as three separate exhibits; the point is a single comparison, so the divider
+     lines do the separating and the head start sits on the seam between the two
+     numbers it explains. */
+  .duo{display:grid; grid-template-columns:1fr auto 1fr; align-items:stretch;
+       background:var(--panel); border:1px solid var(--line); border-radius:16px;
+       overflow:hidden}
+  .side{padding:24px 26px 22px; min-width:0}
+  .side.fast{background:color-mix(in srgb, var(--win) 5%, var(--panel))}
+  .side h2{font-family:"IBM Plex Mono"; font-size:11.5px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--muted); font-weight:500; margin:0}
   .side.fast h2{color:var(--win)}
-  .big{font-family:"Archivo",system-ui,sans-serif; font-weight:800; font-size:104px;
-       line-height:1; letter-spacing:-.03em; margin:8px 0 4px}
+  .big{font-family:"Archivo",system-ui,sans-serif; font-weight:800;
+       font-size:clamp(38px, 5vw, 56px); line-height:1.05; letter-spacing:-.03em;
+       margin:10px 0 6px}
   .side.fast .big{color:var(--win)}
-  .unit{color:var(--faint); font-size:15px; font-family:"IBM Plex Mono"}
+  .unit{color:var(--faint); font-size:13px; line-height:1.5; max-width:32ch}
   .versus{display:flex; flex-direction:column; align-items:center; justify-content:center;
-          gap:6px; padding:0 6px; min-width:150px}
-  .versus .lead{font-family:"Archivo"; font-weight:800; font-size:40px; letter-spacing:-.02em}
-  .versus .cap{font-family:"IBM Plex Mono"; font-size:11px; letter-spacing:.1em;
+          gap:4px; padding:24px 22px; min-width:132px;
+          border-left:1px solid var(--line); border-right:1px solid var(--line)}
+  .versus .lead{font-family:"Archivo"; font-weight:800; font-size:30px;
+                letter-spacing:-.02em; line-height:1}
+  .versus .cap{font-family:"IBM Plex Mono"; font-size:10.5px; letter-spacing:.1em;
     text-transform:uppercase; color:var(--faint); text-align:center; line-height:1.5}
-  .split{display:flex; height:12px; border-radius:999px; overflow:hidden; margin:26px 0 0;
+  @media (max-width:760px){
+    .duo{grid-template-columns:1fr}
+    .versus{border-left:0; border-right:0;
+            border-top:1px solid var(--line); border-bottom:1px solid var(--line);
+            flex-direction:row; gap:10px; padding:14px}
+    .versus .cap{text-align:left}
+  }
+  .split{display:flex; height:10px; border-radius:999px; overflow:hidden; margin:20px 0 0;
          border:1px solid var(--line)}
   .split i{display:block; height:100%}
   .split .a{background:var(--win)}
   .split .b{background:var(--lose)}
   .split .c{background:var(--panel-2)}
-  .splitkey{display:flex; gap:22px; margin:10px 0 0; font-family:"IBM Plex Mono";
-    font-size:12px; color:var(--faint); flex-wrap:wrap}
+  .splitkey{display:flex; gap:20px; margin:9px 0 0; font-family:"IBM Plex Mono";
+    font-size:11.5px; color:var(--faint); flex-wrap:wrap}
   .dot{display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:7px}
-  h3{font-family:"Archivo"; font-weight:700; font-size:18px; margin:38px 0 12px}
-  table{width:100%; border-collapse:collapse; font-family:"IBM Plex Mono"; font-size:14px}
-  th,td{text-align:left; padding:11px 14px; border-bottom:1px solid var(--line); white-space:nowrap}
-  th{font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); font-weight:500}
+  h3{font-family:"Archivo"; font-weight:700; font-size:16px; margin:32px 0 10px}
+  table{width:100%; border-collapse:collapse; font-family:"IBM Plex Mono"; font-size:13px}
+  th,td{text-align:left; padding:8px 14px; border-bottom:1px solid var(--line); white-space:nowrap}
+  /* The two verdict columns carry the story, so they get the room; market and
+     numbers are as narrow as their content. */
+  th:nth-child(4),td:nth-child(4),th:nth-child(5),td:nth-child(5){width:34%}
+  th{font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); font-weight:500}
   td.num,th.num{text-align:right; font-variant-numeric:tabular-nums}
   tr:last-child td{border-bottom:0}
-  .tag{display:inline-block; padding:3px 9px; border-radius:6px; font-size:12px;
+  .tag{display:inline-block; padding:2px 8px; border-radius:6px; font-size:11.5px;
        border:1px solid var(--line); color:var(--muted)}
   .tag.got{border-color:var(--win); color:var(--win)}
   .tag.lost{border-color:var(--lose); color:var(--lose)}
   .tag.idle{color:var(--idle)}
-  .card{background:var(--panel); border:1px solid var(--line); border-radius:16px; overflow:hidden}
+  /* overflow-x only: a narrow screen scrolls the table sideways rather than
+     squashing the two verdict columns. Setting overflow-x alone would compute
+     overflow-y to auto as well and add a scrollbar that is never needed. */
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:16px;
+        overflow-x:auto; overflow-y:hidden}
   .empty{padding:26px 16px; color:var(--faint); font-family:"IBM Plex Mono"; font-size:14px}
-  footer{border-top:1px solid var(--line); margin-top:40px; padding:22px 0 40px;
-         color:var(--faint); font-size:14px; line-height:1.7}
+  footer{border-top:1px solid var(--line); margin-top:34px; padding:20px 0 36px;
+         color:var(--faint); font-size:13.5px; line-height:1.7; max-width:78ch}
   footer b{color:var(--muted); font-weight:600}
 </style>
 <header><div class="wrap bar">
@@ -110,7 +141,7 @@ DUEL_HTML = """<!doctype html>
     </section>
     <div class="versus">
       <div class="lead mono" id="lead">\u2026</div>
-      <div class="cap">median head start<br>over the public feed</div>
+      <div class="cap">median<br>head start</div>
     </div>
     <section class="side fast">
       <h2>DoubleZero edge</h2>
